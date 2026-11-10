@@ -58,6 +58,41 @@
         "torch.causal_conv1d_update"
       ],
       "form": "torch"
+    },
+    {
+      "name": "gdn_chunk_wu",
+      "shapes": {
+        "ndim": 3,
+        "dims": [
+          {
+            "min": 64
+          },
+          {
+            "min": 1
+          },
+          {
+            "in": [
+              64,
+              128,
+              256
+            ]
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": false,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_gdn_chunk_wu.py",
+      "impl": "torch.solve_tril_recompute_wu",
+      "impls": [
+        "torch.solve_tril_recompute_wu"
+      ],
+      "form": "torch"
     }
   ]
 }

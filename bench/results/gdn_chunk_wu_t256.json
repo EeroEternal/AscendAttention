@@ -1,0 +1,39 @@
+{
+  "op": "gdn_chunk_wu",
+  "shape": {
+    "t_total": 256,
+    "hk": 4,
+    "hv": 4,
+    "dim": 128,
+    "seq_lens": [
+      128,
+      128
+    ],
+    "nt_chunks": 4
+  },
+  "dtype": "bfloat16",
+  "device": "npu:0",
+  "pairs": 6,
+  "iters": 20,
+  "rel_err": {
+    "w": 0.0013227513227513227,
+    "u": 0.0010964912280701754
+  },
+  "command": "bench/bench_gdn_chunk_wu.py --t 256 --seq-lens 128,128 --json bench/results/gdn_chunk_wu_t256.json",
+  "host": "tileinfer-102",
+  "date": "2026-11-10T20:39:46+08:00",
+  "measured_ratio": 14.549,
+  "pair_ratios": [
+    14.6849,
+    14.1826,
+    15.7573,
+    15.7941,
+    14.4132,
+    14.0281
+  ],
+  "ms": {
+    "kernel": 0.167,
+    "torch": 2.6003
+  },
+  "ratio_note": "op level: (solve_tril + recompute_w_u) / fused kernel, in-process alternating pairs, median of pair ratios. Comparison set is those two ops only - TileInfer's 45.6x is the isolated form and its 1.91x is the five-op chain, so this number equals neither"
+}

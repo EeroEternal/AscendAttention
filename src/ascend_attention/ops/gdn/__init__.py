@@ -13,7 +13,7 @@ from typing import Any, Optional, Sequence, Tuple
 import torch
 
 from ...plan import OpPlan
-from ...spec import REGISTRY, ImplSpec, ShapeSpec, dim_min, dim_mul
+from ...spec import REGISTRY, ImplSpec, ShapeSpec, dim_in, dim_min, dim_mul
 from .gating import fused_gdn_gating, reference_gdn_gating
 from .leaves import chunk_local_cumsum, l2norm_fwd
 
@@ -23,6 +23,11 @@ __all__ = [
     "CONV_OP",
     "CONV_BASELINE",
     "CONV_KERNEL",
+    "WU_OP",
+    "WU_BASELINE",
+    "WU_KERNEL",
+    "plan_chunk_wu",
+    "run_chunk_wu",
     "plan_gating",
     "run_gating",
     "plan_conv",
@@ -264,3 +269,127 @@ def run_conv(p: OpPlan, x, state, weight, bias, line: int, **kw: Any):
 
 
 REGISTRY.planner(CONV_OP, plan_conv)
+
+
+# --------------------------------------------------------------------- gdn_chunk_wu
+#
+# Fuses ``solve_tril`` and ``recompute_w_u`` (two of the five ops of the chunked-prefill chain).
+# Measured here against those two ops only: 12.31x at T=256, HV=4, D=128.  TileInfer's own ledger has
+# 45.6x "isolated" and 1.91x for the full five-op chain, so this number sits between the two and is
+# recorded with the exact scope in ``ratio_note`` — an op-level ratio is only meaningful with its
+# comparison set attached.
+
+WU_OP = "gdn_chunk_wu"
+
+WU_BASELINE = ImplSpec(
+    op=WU_OP,
+    impl="torch.solve_tril_recompute_wu",
+    form="torch",
+    device="any",
+    shape=ShapeSpec(
+        ndim=3,
+        dims=(dim_min(64), dim_min(1), dim_in(64, 128, 256)),
+        dtypes=frozenset({"bfloat16"}),
+        contiguous=True,
+    ),
+    kv_layouts=frozenset({"ND"}),
+    graph="eager_only",
+    plan_kind="stateless",
+    enabled_by_default=True,
+    measured_ratio=1.0,
+    ratio_note="baseline by definition: the two torch ports the chain runs without a kernel",
+    bench="bench/bench_gdn_chunk_wu.py",
+    provenance="tileinfer/vllm/ops/fla/{solve_tril,wu}.py",
+    note="block inverse (Neumann series) + recompute_w_u, exact torch port",
+)
+
+WU_KERNEL = ImplSpec(
+    op=WU_OP,
+    impl="tilelang.chunk_wu950",
+    form="tilelang",
+    device="ascend950",
+    shape=ShapeSpec(
+        ndim=3,
+        dims=(dim_min(64), dim_min(1), dim_in(64, 128, 256)),
+        dtypes=frozenset({"bfloat16"}),
+        contiguous=True,
+    ),
+    kv_layouts=frozenset({"ND"}),
+    graph="eager_only",
+    plan_kind="kernel",
+    enabled_by_default=False,
+    measured_ratio=14.549,
+    ratio_note=(
+        "14.55x measured in this repo against solve_tril+recompute_w_u only "
+        "(T=256, HV=4, D=128, bf16, 6 alternating pairs, bench/results/gdn_chunk_wu_t256.json, "
+        "2026-11-10); TileInfer's ledger has 45.6x isolated and 1.91x for the full five-op chain, so "
+        "this compares to neither exactly"
+    ),
+    bench="bench/bench_gdn_chunk_wu.py",
+    requires=frozenset({"tilelang"}),
+    provenance="tileinfer/kernels/gdn/chunk_wu_ascend950.py",
+    note="exact-shape kernel; BT=64, 28 cores, w/u rounded to bf16 like the baseline",
+)
+
+REGISTRY.register(WU_BASELINE)
+REGISTRY.register(WU_KERNEL)
+
+
+def plan_chunk_wu(impl: ImplSpec, **pure: Any) -> OpPlan:
+    """Compile-time spec is (T, heads, dim, chunk count, seq count) — all static per batch."""
+    t_total = int(pure["t_total"])
+    hv = int(pure["hv_heads"])
+    hk = int(pure.get("hk_heads", hv))
+    dim = int(pure["dim"])
+    num_seqs = int(pure["num_seqs"])
+    nt_chunks = int(pure["nt_chunks"])
+    dtype_name = str(pure.get("dtype", "bfloat16"))
+
+    if impl.form == "tilelang":
+        from ...kernels.gdn.chunk_wu_ascend950 import build_gdn_wu_kernel
+
+        kernel = build_gdn_wu_kernel(
+            nt_chunks=nt_chunks,
+            num_seqs=num_seqs,
+            t_total=t_total,
+            hv_heads=hv,
+            hk_heads=hk,
+            dim=dim,
+        )
+
+        def execute(a_kkt, k, v, beta, g_cumsum, cu_seqlens, chunk_indices):
+            from ...kernels.gdn.chunk_wu_ascend950 import gdn_chunk_wu
+
+            return gdn_chunk_wu(a_kkt, k, v, beta, g_cumsum, cu_seqlens, chunk_indices)
+
+    else:
+        from ..fla.solve_tril import solve_tril
+        from ..fla.wu import recompute_w_u_fwd
+
+        def execute(a_kkt, k, v, beta, g_cumsum, cu_seqlens, chunk_indices):
+            inv = solve_tril(
+                a_kkt, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices, output_dtype=k.dtype
+            )
+            return recompute_w_u_fwd(
+                k, v, beta, g_cumsum, inv, cu_seqlens=cu_seqlens, chunk_indices=chunk_indices
+            )
+
+    return OpPlan(
+        op=WU_OP,
+        impl=impl.impl,
+        plan_kind=impl.plan_kind,
+        shape=(t_total, hv, dim),
+        dtypes=(dtype_name,),
+        kv_layouts=tuple(sorted(impl.kv_layouts)),
+        graph=impl.graph,
+        meta={"t_total": t_total, "hv_heads": hv, "dim": dim, "nt_chunks": nt_chunks},
+        handle=kernel if impl.form == "tilelang" else None,
+        execute=execute,
+    )
+
+
+def run_chunk_wu(p: OpPlan, a_kkt, k, v, beta, g_cumsum, cu_seqlens, chunk_indices):
+    return p(a_kkt, k, v, beta, g_cumsum, cu_seqlens, chunk_indices)
+
+
+REGISTRY.planner(WU_OP, plan_chunk_wu)
