@@ -49,7 +49,7 @@ def _toplevel_names(tree):
             names.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             names.append(node.module)
-        elif isinstance(node, ast.If):  # import inside `if TYPE_CHECKING:` / try blocks at top
+        elif isinstance(node, (ast.If, ast.Try)):  # `if TYPE_CHECKING:` / guarded imports
             for inner in ast.walk(node):
                 if isinstance(inner, ast.Import):
                     names.extend(alias.name for alias in inner.names)
@@ -69,11 +69,33 @@ def test_no_engine_or_platform_imports(path):
 
 @pytest.mark.parametrize("path", _python_files(), ids=lambda p: str(p.relative_to(SRC)))
 def test_optional_dependencies_are_imported_lazily(path):
-    for name in _toplevel_names(ast.parse(path.read_text(encoding="utf-8"))):
-        assert not name.startswith(LAZY_ONLY), (
-            f"{path.name} imports {name!r} at module scope; it must be lazily imported "
-            "so the package stays importable on a CPU-only box"
-        )
+    """Core modules: never at module scope.  Kernel modules: only behind a ``try`` guard.
+
+    The ``kernels/`` and ``backends/`` exception is deliberate and narrow: those modules *need* the
+    toolchain dialect name (``T``) bound at call time, so they wrap the import in ``try/except`` and
+    report availability instead.  Nothing imports them except a lazily-called function, so
+    ``import ascend_attention`` still never touches the toolchain.
+    """
+    parts = path.relative_to(SRC).parts
+    guarded = "kernels" in parts or "backends" in parts
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        direct = []
+        if isinstance(node, ast.Import):
+            direct = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            direct = [node.module]
+        for name in direct:
+            assert not name.startswith(LAZY_ONLY), (
+                f"{path.name} imports {name!r} unguarded at module scope; it must be lazily "
+                "imported so the package stays importable on a CPU-only box"
+            )
+    if not guarded:
+        for name in _toplevel_names(tree):
+            assert not name.startswith(LAZY_ONLY), (
+                f"{path.name} imports {name!r} even inside a guarded block; only kernel modules "
+                "may do that"
+            )
 
 
 def test_import_pulls_no_engine_and_no_accelerator():

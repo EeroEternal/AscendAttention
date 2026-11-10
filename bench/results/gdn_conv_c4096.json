@@ -1,0 +1,31 @@
+{
+  "op": "gdn_conv_update",
+  "shape": {
+    "channels": 4096,
+    "lines": 8,
+    "width": 4
+  },
+  "dtype": "bfloat16",
+  "device": "npu:0",
+  "pairs": 6,
+  "iters": 50,
+  "max_abs_diff_out": 0.0009765625,
+  "relative_to_scale": 0.004132231404958678,
+  "command": "bench/bench_gdn_conv.py --channels 4096 --lines 8 --json bench/results/gdn_conv_c4096.json",
+  "host": "tileinfer-102",
+  "date": "2026-11-10T20:37:02+08:00",
+  "measured_ratio": 14.1505,
+  "pair_ratios": [
+    11.3714,
+    14.0735,
+    14.4359,
+    14.2275,
+    14.6105,
+    13.9805
+  ],
+  "ms": {
+    "kernel": 0.0168,
+    "torch": 0.272
+  },
+  "ratio_note": "op level: torch baseline / fused kernel, in-process alternating pairs, median of pair ratios. End-to-end was 0.995x in TileInfer (no step-level win) - do not read this as a serving speedup"
+}

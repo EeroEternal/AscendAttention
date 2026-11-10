@@ -29,6 +29,19 @@
 `tests/test_spec.py`、`tests/test_dispatch.py`、`tests/test_manifest.py`、
 `tests/test_import_hygiene.py`、`tests/test_gating_contract.py`、`bench/bench_gdn_gating.py`。
 
+## P1（首个编译内核算子：paged decode）
+
+| 目标文件 | 源文件 | 改动 | 随迁测试 |
+|---|---|---|---|
+| `src/ascend_attention/kernels/attention/paged_decode_ascend950.py` | 同名 | ① 模块级 `import tilelang` → 与 `paged_decode.py` 相同的 `try/except` 守卫；② `from ...serving.buckets import capacity_view` → `from ...abi import capacity_view`（消除内核→serving 反向依赖）；③ `from tileinfer.plan import ...` → `from ...plan import ...`；④ `typing` 补 `Any` | `tests/test_decode_device.py`（新写） |
+| `src/ascend_attention/kernels/attention/paged_decode.py` | 同名 | 仅包路径（其守卫已是源仓范式，本仓沿用） | 设备侧由 P1 后续批次覆盖 |
+| `src/ascend_attention/kernels/attention/kv_nz_layout.py` | 同名 | 无改动（仅 torch） | — |
+| `src/ascend_attention/backends/tilelang_ascend950.py` | 同名 | `from ...x` → `from ..x`（含函数内 import） | `tests/test_decode_device.py` |
+| `src/ascend_attention/backends/tilelang_ascend.py` | 同名 | 同上 | 同上 |
+| `src/ascend_attention/ops/attention/__init__.py` | 新写 | 注册 `torch.reference`（oracle，永不默认）与 `tilelang.decode950`（**未测速→不默认、不进清单**）；`plan_decode` 只做数据校验，编译发生在 planner 内 | `tests/test_decode_device.py` 前两个用例 |
+
+新写：`bench/bench_paged_decode.py`（只记绝对延迟，拒绝把 gather 基线当 `measured_ratio`）。
+
 ## 未搬（及原因）
 
 | 源 | 原因 |

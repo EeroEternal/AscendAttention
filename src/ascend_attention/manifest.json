@@ -33,6 +33,31 @@
         "torch.gating"
       ],
       "form": "torch"
+    },
+    {
+      "name": "gdn_conv_update",
+      "shapes": {
+        "ndim": 1,
+        "dims": [
+          {
+            "mul": 32
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": false,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_gdn_conv.py",
+      "impl": "torch.causal_conv1d_update",
+      "impls": [
+        "torch.causal_conv1d_update"
+      ],
+      "form": "torch"
     }
   ]
 }
