@@ -16,6 +16,13 @@ CANN 9.3（`ASCEND_HOME` 指向 TileInfer 的 `.work/cann930`），缓存复用 
 | `gdn_conv_update` | `tilelang.conv950` | TileLang 内核 | **否** | **14.15**（op 级） | [核实] 设备实测；e2e 0.995 来自源仓 [待复核] |
 | `gdn_chunk_wu` | `torch.solve_tril_recompute_wu` | torch 组合 | 是（基线） | 1.0 | [核实] |
 | `gdn_chunk_wu` | `tilelang.chunk_wu950` | TileLang 内核 | **否** | **14.55**（vs 链中 2 个算子） | [核实] 设备实测；输出相对误差 1.3e-3 |
+| `paged_prefill_attention` | `torch.reference` | torch oracle（`attention`） | 是 | 1.0（基线定义） | [核实] 独立 fp64 定义式（页号展开到 token 槽） |
+| `paged_prefill_attention` | `tilelang.prefill950` | TileLang 内核 | **否** | — | **未接线**：内核在仓（`paged_prefill_ascend950`），编排是 tile-count 驱动、非 plan-backed；`plan()` 显式 `NotImplementedError` |
+| `moe_slot_layout` | `torch.slot_layout` | torch 组合 | 是 | 1.0（定义性） | [核实] 与 `testing/moe_reference` 的循环写法逐项一致 |
+| `moe_prenz_pack` | `torch.prenz_pack` | torch 组合 | 是 | 1.0（定义性） | [核实] pack→unpack 逐位复原 |
+| `sampling_topk_threshold` | `torch.topk_threshold` | torch 组合 | 是（基线） | 1.0 | [核实] 与 `mask_top_k_by_logits` 对齐 |
+| `sampling_topk_threshold` | `vendor.deep_select` | vendor_call | **是** | **3.8432**（B=8/V=152064/k=20/bf16，6 对） | [核实] 设备实测；清单里唯一非基线条目 |
+| `sampling_greedy` | `torch.argmax` | torch 组合 | 是 | 1.0（定义性） | [核实] 与 `torch.argmax` 逐位相同 |
 
 ## 账本（`bench/results/*.json`）
 
@@ -24,6 +31,11 @@ CANN 9.3（`ASCEND_HOME` 指向 TileInfer 的 `.work/cann930`），缓存复用 
 | `decode_b8_s2048_d128.json` | B=8 / S=2048 / d=128 / group=8，vs `npu_fusion_attention`（dense KV） | **0.362×，慢 2.76×**；与源仓自述「TPOT 2.53×」一致，方向不矛盾 |
 | `gdn_conv_c4096.json` | C=4096 / L=8 / W=4 / bf16，vs `causal_conv1d_update` | **14.15×**（0.0168 ms vs 0.272 ms），输出相对误差 4.1e-3 |
 | `gdn_chunk_wu_t256.json` | T=256（2×128）/ HV=4 / D=128，vs `solve_tril`+`recompute_w_u` | **14.55×**（0.167 ms vs 2.600 ms），w/u 相对误差 1.3e-3 |
+| `gdn_gating_t128.json` | T=128 / H=16，基线校准 | 1.0（定义性；0.019 ms，CPU） |
+| `moe_layout_cpu.json` | slot_layout 0.0878 ms / prenz_pack 0.0433 ms（CPU） | 绝对延迟，无比值（唯一实现） |
+| `sampling_topk_b8.json` | B=8 / V=152064 / k=20 / bf16，vs `torch.topk_threshold` | **3.8432×**（时间比 0.2602，6 对） |
+| `sampling_greedy_b8.json` | B=8 / V=152064，argmax 绝对延迟 | 1.0（定义性对等，0.0179 ms，上卡） |
+| `prefill_reference_b4_s4096.json` | B=4 / S=4096，reference 语义 | 绝对延迟，无数值比值 |
 
 测量协议（两个脚本都实现）：同进程交替 A/B、≥4 对、取每对比值中位数、记录命令/卡/日期；
 op 级与端到端分开记；**端到端没过关的 op 不进默认**。
@@ -39,9 +51,17 @@ op 级与端到端分开记；**端到端没过关的 op 不进默认**。
 
 ## 清单（`src/ascend_attention/manifest.json`）当前内容
 
-平台清单只收「有 `measured_ratio` + `bench` 且默认启用」的实现。于是现在清单里只有两个
-**torch 基线**条目（`gdn_gating`、`gdn_conv_update`，比值 1.0），含义是「本仓有这个 op，但
-没有可用的加速实现，用它与厂商路径持平」——不是性能声明。两个内核都因为「不默认」而不出现。
+平台清单只收「有 `measured_ratio` + `bench` 且默认启用」的实现：现在 **8 条**，其中 7 条是
+`torch` 基线（比值 1.0，含义是"有这个 op、与厂商路径持平"，不是性能声明），1 条是真加速
+（`vendor.deep_select` 3.8432×）。默认关的实现（decode 的两个、conv/chunk_wu 的内核、prefill 内核）
+**不进清单**，但都出现在完整清册里，带 `graph`/`requires`/`note`：
+
+```
+python -m ascend_attention                 # 清单（可用子集）
+python -m ascend_attention --capabilities  # 清册（含默认关的实现与原因）
+```
+
+两者的分工与"decode 为什么不在清单里"见 `docs/contracts/exposure.md`。
 
 ## P2c（权重整形 + 基线自身取证）
 
@@ -82,9 +102,19 @@ op 级与端到端分开记；**端到端没过关的 op 不进默认**。
   会选中 bf16-only 的 vendor 实现，然后在 planner 里抛。现在 dtype 门与 shape 无关。
 - 并列语义记进 `docs/pitfalls.md`：bf16 词表 152k 必有碰撞，vendor 与 torch 可能选到**不同下标、
   相同数值**；用下标集合做判据会误报（第一次就是这么误报的）。
-- P3：MoE 三个 op（`slot_layout` 2.569×、`prenz` 负结果归档、`shared_fold`），先判决接不接。
-- P4：采样（`vendor_call` 形态）。
-- P5：端到端账本 + TileInfer 反向接入等价证明 + 图捕获守卫审计。
+## 批次完成情况（P0–P5）
+
+| 批 | 内容 | 状态 |
+|---|---|---|
+| P0 | 骨架 + 三入口 + fp64 oracle + `capture_guard` | ✅ |
+| P1 | attention：decode（设备对数、真图捕获）、prefill 语义、布局声明 | ✅（prefill 编排按边界不迁，见 `archive-attention.md`） |
+| P2 | GDN 全链 + 四个"静默杀手"契约 | ✅ |
+| P3 | MoE：两个基线 + 四样归档 | ✅ |
+| P4 | 采样：vendor_call（唯一正收益）+ greedy + 分流规则 | ✅（`fused_sample` 归档） |
+| P5 | 清单/账本/反向接入/绑定覆盖/审计 | ✅ |
+
+逐条验收与"没做"清单在 `docs/completion-audit.md`；反向接入的 off/on 证明在
+`docs/reverse-integration.md` §6。
 
 ## attention 族的归档（`docs/archive-attention.md`）
 
