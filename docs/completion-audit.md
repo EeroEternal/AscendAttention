@@ -24,7 +24,7 @@
 | `manifest()` 可 json.dumps，`supports()` 无需张量 | ✅ | `tests/test_manifest.py`、`tests/test_spec.py` |
 | `plan/run` 在 reference 上跑通 decode 与 prefill 全分支 + fp64 oracle（尾页 poison 1e4） | ✅ | `tests/test_decode_fp64.py`（**独立 fp64 定义式**，不共用实现里的页展开代码，1e-6 + 反例）、`tests/test_attention_api.py`（decode 对 reference）、`tests/test_prefill_api.py`（prefill/append + fp64 oracle）、`tests/test_acceptance_mechanisms.py::test_partial_last_page_padding_does_not_change_the_result`（1e4 poison 逐位不变） |
 | `capture_guard()` 抓得住 `torch.empty` | ✅ 本轮补齐 | `tests/test_capture_guard.py`（8 项，含 device 侧 `eager_only` 实证） |
-| 零 `import vllm`；单文件与整套都绿 | ✅ | 358 tests；`test_import_hygiene` 走 AST 全包扫描 |
+| 零 `import vllm`；单文件与整套都绿 | ✅ | 360 tests；`test_import_hygiene` 走 AST 全包扫描 |
 
 ## P1 验收
 
@@ -67,7 +67,7 @@
 
 | 条款 | 状态 | 证据 / 缺口 |
 |---|---|---|
-| 发布 `manifest.json`（含比值与 note） | ✅ | `src/ascend_attention/manifest.json`（8 ops，schema 1） |
+| 发布 `manifest.json`（含比值与 note） | ✅ | `src/ascend_attention/manifest.json`（8 ops，schema 1）；**每个启用的实现都有已提交的账本文件**（8 个），由 `tests/test_manifest.py::test_every_manifest_entry_points_at_an_existing_bench_result` 机械校验 |
 | 可选 `vllm_adapter` | ❌ **未做** | 与"全仓零 vllm 依赖"直接冲突，且需要 vLLM 的 ABI 名。若要做，只能放 `integrations/`（不进 wheel、不被 AST 测试扫描）并单独声明依赖；本轮选择不做并记录 |
 | TileInfer 反向改造为依赖本仓 | ✅（有限但真实） | `tileinfer/vllm/ops/extern.py` + 2 行接线，默认 off；off/on 逐位相同（8 组 sha256 + 双方测试） |
 | `TILEINFER_OPS_CANDIDATES=off/on` 数字不变 | ✅（算子级 + 测试级） | 见 `docs/reverse-integration.md` §3–§4；**服务级 A/B 明确不做**（平台语义） |
@@ -90,7 +90,7 @@
 | 元数据 dtype 跨实现不一致 | ABI 把 dtype 写成数据 | ⚠️ 部分（int32 统一，fork 变体未并测） |
 | `__future__` 破坏 TileLang | AST ratchet（本轮真修了 2 个文件） | ✅ 本轮 |
 | 内核读 env | `utils.kernel_flag()` 单一入口 + AST ratchet（禁止直接 `os.environ`、flag 名钉死） | ✅ 本轮（未参数化，见缺口 6） |
-| 测试顺序污染 | 禁止全局 fixture；整套 + 逐文件双跑 | ✅ 358 项 |
+| 测试顺序污染 | 禁止全局 fixture；整套 + 逐文件双跑 | ✅ 360 项 |
 | 许可证/出处 | `NOTICE` + 每个 impl 的 `provenance` | ✅ |
 
 ## 还没做的（明确清单）

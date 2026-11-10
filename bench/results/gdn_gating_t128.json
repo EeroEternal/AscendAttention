@@ -1,0 +1,19 @@
+{
+  "op": "gdn_gating",
+  "shape": {
+    "t": 128,
+    "h": 16
+  },
+  "dtype": "bfloat16",
+  "device": "cpu",
+  "pairs": 6,
+  "iters": 20,
+  "ms": {
+    "baseline": 0.0189
+  },
+  "measured_ratio": 1.0,
+  "ratio_note": "baseline calibration: the torch composition is the reference by definition, so this entry can only ever be 1.0 (kernel-level entries come with --impl)",
+  "command": "bench/bench_gdn_gating.py --pairs 6",
+  "host": "tileinfer-102",
+  "date": "2026-11-10T21:32:52+08:00"
+}

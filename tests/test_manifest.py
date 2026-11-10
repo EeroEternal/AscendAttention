@@ -97,3 +97,30 @@ def test_platform_rejects_a_manifest_we_would_never_emit():
     broken["ops"][0].pop("measured_ratio")
     with pytest.raises(platform_manifest.ManifestError, match="measured_ratio"):
         platform_manifest.parse_manifest(broken)
+
+
+def test_every_manifest_entry_points_at_an_existing_bench_result():
+    """A ratio with no ledger file is a number nobody can re-derive.
+
+    The manifest names a `bench` script per enabled implementation; this checks that the *result* that
+    script writes is committed next to it, so a reader can see the command, the card, the date and the
+    per-pair spread rather than trusting a float.
+    """
+    import pathlib
+
+    from ascend_attention import capabilities
+
+    results = pathlib.Path(__file__).resolve().parents[1] / "bench" / "results"
+    existing = {p.name for p in results.glob("*.json")}
+    assert existing, "no bench results committed at all"
+
+    missing = []
+    for op in capabilities()["ops"]:
+        for impl in op["impls"]:
+            if not impl["enabled_by_default"] or impl["measured_ratio"] is None:
+                continue
+            script = pathlib.Path(impl["bench"]).stem  # e.g. bench_gdn_gating
+            prefix = script.replace("bench_", "")
+            if not any(name.startswith(prefix) or name.startswith(prefix.split("_")[0]) for name in existing):
+                missing.append((op["op"], impl["impl"], impl["bench"]))
+    assert not missing, f"enabled implementations without a committed bench result: {missing}"

@@ -1,0 +1,19 @@
+{
+  "op": "sampling_greedy",
+  "impl": "torch.argmax",
+  "shape": {
+    "batch": 8,
+    "vocab": 152064
+  },
+  "dtype": "bfloat16",
+  "device": "npu:0",
+  "iters": 20,
+  "ms_median": 0.0167,
+  "ms_min": 0.0153,
+  "measured_ratio": 1.0,
+  "ratio_kind": "definitional parity (single implementation; argmax is the semantics)",
+  "parity_vs_torch_argmax": true,
+  "command": "bench/bench_sampling_greedy.py --batch 8 --vocab 152064",
+  "host": "tileinfer-102",
+  "date": "2026-11-10T21:33:12+08:00"
+}
