@@ -55,7 +55,14 @@ ENV_IMPL = "ASCEND_ATTN_IMPL"
 #: Optional plan-variant pin (``op=variant``); consumed by implementations that have variants.
 ENV_PLAN = "ASCEND_ATTN_PLAN"
 
-_FALSE = {"", "0", "false", "off", "no"}
+#: The spellings of the kill switch, copied deliberately from TileInfer's and AscendPlatform's
+#: ``candidates._parse_switch``: all three libraries live in one venv, so the same word must mean the same
+#: thing in each.  ``tests/test_switch_parity.py`` reads TileInfer's parser and fails if the sets diverge.
+_ON_VALUES = {"1", "all", "enable", "enabled", "on", "true", "yes"}
+_OFF_VALUES = {"0", "disable", "disabled", "false", "no", "none", "off"}
+
+#: Unrecognised values already warned about (one line each, not one per call).
+_WARNED_SWITCH: set = set()
 
 #: Cached device-profile name; probing ``/dev`` costs a ``stat`` and dispatch may not do that per call.
 _DEVICE_NAME: Optional[str] = None
@@ -91,11 +98,34 @@ def current_device_name() -> str:
 
 
 def candidates_enabled() -> bool:
-    """Is the kill switch on?  Unset / garbage means *on* (shipping behaviour must be the default)."""
+    """Is the kill switch on?
+
+    Unset means **on** (shipping behaviour is the default).  A *recognised* on/off word decides.
+    Anything else means **off**, which is the same fail-safe
+    direction TileInfer and AscendPlatform take: a typo must not leave an unmeasured kernel live.  The
+    warning is emitted once per distinct value so a per-step call site stays quiet.
+    """
     raw = os.environ.get(ENV_CANDIDATES)
-    if raw is None:
+    if raw is None or not raw.strip():
+        # Unset *and* blank both mean "no override" in TileInfer; matching that exactly matters more than
+        # which of the two readings is nicer, because the words are supposed to be interchangeable.
         return True
-    return raw.strip().lower() not in _FALSE
+    value = raw.strip().lower()
+    if value in _ON_VALUES:
+        return True
+    if value in _OFF_VALUES:
+        return False
+    if value not in _WARNED_SWITCH:
+        _WARNED_SWITCH.add(value)
+        logger.warning(
+            "%s=%r is not a recognised value (on: %s | off: %s); treating candidate selection as OFF so "
+            "only baseline implementations run. Fix the variable and restart.",
+            ENV_CANDIDATES,
+            raw,
+            ", ".join(sorted(_ON_VALUES)),
+            ", ".join(sorted(_OFF_VALUES)),
+        )
+    return False
 
 
 def kill_switch_state() -> Dict[str, Any]:

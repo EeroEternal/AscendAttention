@@ -71,3 +71,26 @@ _EXTERN = _apply_extern(globals(), ("chunk_local_cumsum", "l2norm_fwd"))
 | 采样 `topk` | 本仓是 `vendor_call` 形态，直接调 `deep_select`；TileInfer 有自己的门控窗口，两边门控不同，绑定会双重门控 |
 
 **绑定清单可以变长，但每加一个都要先有"逐位相同"的证据**，不是"看起来一样"。
+
+## 6. `TILEINFER_OPS_CANDIDATES=off/on` 的证明（2026-11-10）
+
+用户要求的判据是"反向依赖后 off/on 数字不变"。分两层证，命令可复现：
+
+**① 测试层**（在 TileInfer 里跑，两个模式各一次）：
+
+```
+TILEINFER_OPS_CANDIDATES=off pytest tests/test_op_candidates.py tests/test_gdn_ops.py tests/test_gdn_gating.py -q
+TILEINFER_OPS_CANDIDATES=     pytest tests/test_op_candidates.py tests/test_gdn_ops.py tests/test_gdn_gating.py -q
+```
+
+两次都是 **43 passed**（同一组断言，同一组数字）。
+
+**② 算子层**：`tests/test_tileinfer_equivalence.py` 在本仓跑，把 `TILEINFER_OPS_LIB` 指向
+`ascend_attention` 与不指，对 8 个 (op, shape) 求 sha256：**逐位相同**，且 TileInfer 的 50 个算子测试在
+两种模式下都通过。
+
+**③ 熔断语义本身也做了对齐**（本轮发现并修掉的一处不一致）：本仓原先把 `none`/`disable`/`disabled`
+和空值都读成 **on**，而 TileInfer 与 AscendPlatform 读成 off 或"无覆盖"。三家现在共用同一组字面量，
+`tests/test_switch_parity.py` 直接 import TileInfer 的解析器逐个别名比对（17 个写法），任何一方漂移就红。
+
+**没做**的：服务级 TPOT A/B（要起引擎，属于平台语义），见 `docs/status.md` 的口径说明。
