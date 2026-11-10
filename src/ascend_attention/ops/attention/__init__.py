@@ -234,7 +234,41 @@ PREFILL_REFERENCE = ImplSpec(
     ),
 )
 
+#: The prefill *kernel* is in this repo but not wired: its orchestration (tile counts, split/merge,
+#: frontier bookkeeping) is tile-count-driven rather than plan-backed, which is the one thing this
+#: library refuses to absorb.  Declared so the inventory tells the truth instead of implying the kernel
+#: does not exist.
+PREFILL_KERNEL_UNWIRED = ImplSpec(
+    op=PREFILL,
+    impl="tilelang.prefill950",
+    form="tilelang",
+    device="ascend950",
+    shape=ShapeSpec(
+        ndim=4,
+        dims=(dim_min(1), dim_min(1), dim_min(1), dim_in(128, 256)),
+        dtypes=frozenset({"bfloat16", "float16"}),
+        contiguous=True,
+    ),
+    kv_layouts=frozenset({"ND"}),
+    graph="eager_only",
+    plan_kind="attention",
+    enabled_by_default=False,
+    measured_ratio=None,
+    bench=None,
+    ratio_note="not wired, so not measured: there is no path to benchmark yet",
+    requires=frozenset({"tilelang", "torch_npu"}),
+    provenance=(
+        "tileinfer/kernels/attention/paged_decode_ascend950.py:paged_prefill_ascend950 (+split/head/"
+        "frontier variants) and tileinfer/attention/prefill.py (orchestration, not migrated)"
+    ),
+    note=(
+        "kernel present in-tree, orchestration deliberately not migrated: a prefill step's tile count "
+        "depends on the batch, which a per-shape plan cannot express (backends/tilelang_ascend950.py:89-95)"
+    ),
+)
+
 REGISTRY.register(PREFILL_REFERENCE)
+REGISTRY.register(PREFILL_KERNEL_UNWIRED)
 
 
 def plan_prefill(impl: ImplSpec, **pure: Any) -> OpPlan:
@@ -265,6 +299,13 @@ def plan_prefill(impl: ImplSpec, **pure: Any) -> OpPlan:
         raise ValueError(
             f"paged_prefill_attention/{impl.impl}: q=({batch}, {num_qo_heads}, {qo_len}, {head_dim}) "
             f"dtype={dtype_name} is outside the declared contract"
+        )
+
+    if impl.form == "tilelang":
+        raise NotImplementedError(
+            f"paged_prefill_attention/{impl.impl}: the prefill kernel is in-tree but its orchestration is "
+            "tile-count-driven and not plan-backed (see ImplSpec.note); use impl='torch.reference' or "
+            "drive the kernel from the platform's prefill path"
         )
 
     from ...api import BatchAttention

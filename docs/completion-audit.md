@@ -34,7 +34,7 @@
 | `capture_guard` 在 decode `run` 上零违规 | ✅ 本轮 | `tests/test_decode_capture_device.py::test_decode_run_has_no_host_reads`（0 syncs / 1 alloc）+ **真图捕获**：`NPUGraph` capture+replay 与 eager **逐位相同**（0.0）。据此 `graph` 由 `unknown` 升为 `capture_safe` |
 | manifest 两 impl 的 `measured_ratio` 与 `ratio_note` 齐全 | ✅（口径改为"清册 + 子集"） | 两个实现的 `graph` / `requires` / `note` 都在 `capabilities()` 清册里；`manifest.json` 只收可用子集，所以 decode 整体不在其中（`measured_ratio=None` → 四道门拒绝）。这不是漏写，见 `docs/contracts/exposure.md` 与 `tests/test_exposure.py`。`tilelang.decode950` 仍**没有本仓 op 级 A/B**，0.362× 那次是 vs vendor FIA |
 | `supports()` 仅凭 shape 拒绝非法 head_dim/group | ✅ | `tests/test_spec.py`、`tests/test_prefill_api.py`（head_dim=48 被拒） |
-| prefill 内核 | ❌ **未迁** | 只提供 reference 语义（`paged_prefill_attention`）；TileInfer 的 prefill 是 tile-count 驱动、非 plan-backed，硬塞进 manifest 会写下一个没人用的编译键 |
+| prefill 内核 | ⚠️ **内核在仓、编排未迁** | 声明 `tilelang.prefill950`（`enabled=False`、`ratio=None`、`note` 写明原因、`provenance` 指向 `paged_prefill_ascend950`），planner 明确 `NotImplementedError` 而不是给半条路。reference 语义已可用并有 fp64 oracle |
 
 ## P2 验收
 

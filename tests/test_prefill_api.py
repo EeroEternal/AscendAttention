@@ -155,3 +155,35 @@ def test_prefill_rejects_illegal_head_dim_at_plan_time():
             dtype="float32",
             device="cpu",
         )
+
+
+def test_the_unwired_kernel_is_declared_and_refuses_clearly():
+    """The inventory must not imply the prefill kernel is missing - it exists, it is just not wired."""
+    from ascend_attention import capabilities
+    from ascend_attention.spec import REGISTRY
+
+    op = next(o for o in capabilities()["ops"] if o["op"] == "paged_prefill_attention")
+    impls = {i["impl"]: i for i in op["impls"]}
+    kernel = impls["tilelang.prefill950"]
+    assert kernel["enabled_by_default"] is False
+    assert kernel["measured_ratio"] is None
+    assert "orchestration deliberately not migrated" in kernel["note"]
+    assert "paged_prefill_ascend950" in kernel["provenance"]
+
+    _, k_cache, v_cache, meta, _ = _case()
+    with pytest.raises(NotImplementedError, match="not plan-backed"):
+        plan(
+            "paged_prefill_attention",
+            impl="tilelang.prefill950",
+            k_cache=k_cache,
+            v_cache=v_cache,
+            kv_indptr=meta.kv_indptr,
+            kv_indices=meta.kv_indices,
+            page_size=meta.page_size,
+            num_qo_heads=4,
+            num_kv_heads=2,
+            qo_indptr=torch.tensor([0, 5, 10], dtype=torch.int32),
+            head_dim=128,
+            dtype="bfloat16",
+            device="cpu",
+        )
