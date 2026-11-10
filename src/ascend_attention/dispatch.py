@@ -10,7 +10,10 @@ The gate, in order
 1. ``ASCEND_ATTN_CANDIDATES=off`` — process-wide kill switch, read per call (a dict hit).
 2. ``enabled_by_default`` — the explicit "this is a candidate, not the default" flag.
 3. ``measured_ratio >= threshold`` — a recorded number below 1.0 is ineligible **even if enabled**.
-4. shape / dtype / layout / graph acceptance — pure data (:meth:`ImplSpec.accepts_shape`).
+4. device acceptance — an impl tied to one device is rejected elsewhere (pure data: ``impl.device``
+   against the current profile's name), so a vendor or kernel impl can be *enabled* without making a
+   CPU box route to it;
+5. shape / dtype / layout / graph acceptance — pure data (:meth:`ImplSpec.accepts_shape`).
 
 Falling through every step returns the baseline (the ``torch`` implementation), which is the
 pre-candidate behaviour byte for byte.
@@ -53,6 +56,19 @@ ENV_IMPL = "ASCEND_ATTN_IMPL"
 ENV_PLAN = "ASCEND_ATTN_PLAN"
 
 _FALSE = {"", "0", "false", "off", "no"}
+
+#: Cached device-profile name; probing ``/dev`` costs a ``stat`` and dispatch may not do that per call.
+_DEVICE_NAME: Optional[str] = None
+
+
+def current_device_name() -> str:
+    """The profile name dispatch compares ``ImplSpec.device`` against (cached after the first call)."""
+    global _DEVICE_NAME
+    if _DEVICE_NAME is None:
+        from .device import current
+
+        _DEVICE_NAME = current().name
+    return _DEVICE_NAME
 
 
 def candidates_enabled() -> bool:
@@ -118,7 +134,15 @@ def select(entry: OpEntry, **query: Any) -> Decision:
     # ① kill switch: disarms everything except the baseline (and an explicit pin).
     global_on = candidates_enabled()
 
-    for impl in entry.impls:
+    # Candidates first (highest recorded ratio first), the torch baseline last: the baseline is the
+    # fallback, never the first thing tried, and registration order must not decide a performance
+    # question.  Sorting is over a handful of specs and stable, so it cannot allocate per tensor.
+    candidates = [i for i in entry.impls if i.form != "torch"]
+    ordered = sorted(candidates, key=lambda i: -(i.measured_ratio or 0.0)) + [
+        i for i in entry.impls if i.form == "torch"
+    ]
+
+    for impl in ordered:
         if pinned is not None and impl.impl == pinned:
             return Decision(entry.name, impl, f"pinned by {ENV_IMPL}", tuple(rejected))
         if pinned is not None and impl.impl != pinned and impl.form != "torch":
@@ -136,7 +160,11 @@ def select(entry: OpEntry, **query: Any) -> Decision:
         if not impl.enabled_by_default:
             rejected.append((impl.impl, "off by default"))
             continue
-        # ③ data-only acceptance
+        # ③ device acceptance: a kernel written for the 950 must not be chosen on a 910B or a CPU
+        if impl.device not in ("any", current_device_name()):
+            rejected.append((impl.impl, f"needs device {impl.device}"))
+            continue
+        # ④ data-only acceptance
         if not impl.accepts_shape(**query):
             rejected.append((impl.impl, "shape/dtype/layout/graph does not match"))
             continue

@@ -88,7 +88,27 @@ TILEINFER_ALLOW_SPLIT_KV=1`。
 **守卫**：设备相关命令一律在 full-access 下跑，先做 canary（`npu-smi info` →
 `torch.npu.is_available()` → 一个小内核）。
 
-## 9. 比值必须有比较集，否则是噪声
+## 9. bf16 大词表里 top-k 必有并列，"下标集合相同"是错的判据
+
+**症状**：B=8 / V=152064 / k=20 时，vendor `deep_select.topk` 与 `torch.topk` 的**下标集合不同**，
+但把两边的 value 排序后逐位相同（max_abs_diff = 0.0）。B=1 或 V=1024 时集合完全一致。
+
+**根因**：bf16 只有 8 位尾数，15 万个采样必然碰撞；top-k 在并列处取哪个下标是实现自由。阈值式
+top-k（保留所有等于阈值的 token）本来就**比排序式宽**。
+
+**守卫**：判据用"选中的 value 排序后逐位相等 + 数量 == k"，不用下标集合；这条写进了
+`tests/test_sampling_vendor_device.py` 的 docstring，因为第一次运行就是被它误报的。
+
+## 10. 分派顺序会决定"性能问题"的答案
+
+**症状**：`sampling_topk_threshold` 明明有 3.84× 的 vendor 实现且已启用，`plan()` 却返回 torch 基线。
+
+**根因**：`select()` 按注册顺序取第一个合格实现，基线先注册就先返回。
+
+**守卫**：候选按 `measured_ratio` 降序、torch 基线排最后（`dispatch.select` 里的 `ordered`）。
+注册顺序只影响同比值候选之间的次序，不影响"选更快的那条"。
+
+## 11. 比值必须有比较集，否则是噪声
 
 **症状**：同一个 conv 内核，源仓记 42.5×、本仓记 14.15×；`chunk_wu` 源仓 45.6×/1.91×/1.04×，
 本仓 14.55×。

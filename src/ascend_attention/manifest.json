@@ -93,6 +93,92 @@
         "torch.solve_tril_recompute_wu"
       ],
       "form": "torch"
+    },
+    {
+      "name": "moe_slot_layout",
+      "shapes": {
+        "ndim": 1,
+        "dims": [
+          {
+            "min": 1
+          }
+        ]
+      },
+      "dtypes": [
+        "int32",
+        "int64"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": true,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_moe_layout.py",
+      "impl": "torch.slot_layout",
+      "impls": [
+        "torch.slot_layout"
+      ],
+      "form": "torch"
+    },
+    {
+      "name": "moe_prenz_pack",
+      "shapes": {
+        "ndim": 2,
+        "dims": [
+          {
+            "min": 1
+          },
+          {
+            "mul": 16
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": true,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_moe_layout.py",
+      "impl": "torch.prenz_pack",
+      "impls": [
+        "torch.prenz_pack"
+      ],
+      "form": "torch"
+    },
+    {
+      "name": "sampling_topk_threshold",
+      "shapes": {
+        "ndim": 2,
+        "dims": [
+          {
+            "min": 1
+          },
+          {
+            "min": 1
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": false,
+      "measured_ratio": 3.8432,
+      "bench": "bench/bench_sampling_topk.py",
+      "impl": "vendor.deep_select",
+      "impls": [
+        "torch.topk_threshold",
+        "vendor.deep_select"
+      ],
+      "form": "vendor_call"
     }
   ]
 }

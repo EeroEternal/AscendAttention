@@ -54,10 +54,28 @@ op 级与端到端分开记；**端到端没过关的 op 不进默认**。
 - 顺手挖到一个**会静默出零**的坑：上游 `null_block_id` 默认 0，第 0 行被整段跳过。已修 planner 并加
   测试，记入 `docs/pitfalls.md` 第 1 条。
 
-## 下一批
+## P3（MoE：判决后只迁两个基线）
 
-- P3：MoE。先判决 `slot_layout` 是否值得接；`prenz` / `0.86× grouped_gemm` / 结果错的 `down_prenz`
-  只归档；`shared_expert_fold` 需先补 A/B。
+- 迁入 `moe_slot_layout`（compact→slot 布局，纯 torch、零主机同步）与 `moe_prenz_pack`
+  （ND→compact-NZ 权重打包）。两者都与另一份独立实现/往返语义对齐：
+  `moe_slot_layout` 与 `testing/moe_reference.build_slot_layout`（循环写法）在 compact→slot 映射上
+  **逐项一致**；`prenz` pack→unpack 逐位复原且物理序对公式。
+- 不迁的四样写进 `docs/archive-moe.md`：`grouped_gemm` **0.86×**（负）、`down_prenz` 结果错（~1e36）、
+  `align_*` 未到门槛且依赖 c_api、`shared_expert_fold` 只有 [待复核] 单窗数字。
+- 两个 op 的 `measured_ratio` 是**定义性的 1.0**（唯一实现、无可比对象），账本只记绝对延迟。
+
+## P4（采样：第一个 vendor_call，且是本仓第一个正收益入清单）
+
+- `sampling_topk_threshold`：语义是"保留 logit ≥ 第 k 大的 token"（阈值式 top-k，**保留并列**）。
+  - `torch.topk_threshold`（基线，1.0）：`topk` 取阈值再 mask。
+  - `vendor.deep_select`：**实测 3.8432×**（B=8、V=152064、k=20、bf16，6 对交替，时间比 0.26；
+    `bench/results/sampling_topk_b8.json`）。**已默认启用并入清单**——这是清单里唯一一个非基线条目。
+- 顺带补了两道原先没有的闸门：
+  - **设备闸**：`ImplSpec.device` 不属于 `{"any", 当前画像}` 直接拒绝（否则 CPU 机器会路由到只有 950
+    才有的实现）；
+  - **基线最后尝试**：候选按比值降序、torch 基线排最后，注册顺序不再决定性能选择。
+- 并列语义记进 `docs/pitfalls.md`：bf16 词表 152k 必有碰撞，vendor 与 torch 可能选到**不同下标、
+  相同数值**；用下标集合做判据会误报（第一次就是这么误报的）。
 - P3：MoE 三个 op（`slot_layout` 2.569×、`prenz` 负结果归档、`shared_fold`），先判决接不接。
 - P4：采样（`vendor_call` 形态）。
 - P5：端到端账本 + TileInfer 反向接入等价证明 + 图捕获守卫审计。

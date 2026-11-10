@@ -1,0 +1,28 @@
+{
+  "ops": [
+    "moe_slot_layout",
+    "moe_prenz_pack"
+  ],
+  "shape": {
+    "rows": 2048,
+    "experts": 32,
+    "block_m": 32,
+    "em_static": 96,
+    "rows_static": 3072,
+    "pack_matrix": [
+      1024,
+      1024
+    ]
+  },
+  "device": "cpu",
+  "iters": 20,
+  "measured_ratio": null,
+  "ratio_note": "layout ops have a single implementation, so no ratio exists; these are absolute latencies of the baseline, recorded so a regression has a reference point",
+  "command": "bench/bench_moe_layout.py --rows 2048 --experts 32 --cols 1024 --json bench/results/moe_layout_cpu.json",
+  "host": "tileinfer-102",
+  "date": "2026-11-10T20:50:54+08:00",
+  "ms": {
+    "slot_layout": 0.0878,
+    "prenz_pack": 0.0433
+  }
+}

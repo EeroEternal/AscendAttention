@@ -1,0 +1,36 @@
+{
+  "op": "sampling_topk_threshold",
+  "shape": {
+    "batch": 8,
+    "vocab": 152064,
+    "k": 20
+  },
+  "dtype": "bfloat16",
+  "device": "npu:0",
+  "pairs": 6,
+  "iters": 10,
+  "command": "bench/bench_sampling_topk.py --batch 8 --vocab 152064 --k 20 --json bench/results/sampling_topk_b8.json",
+  "host": "tileinfer-102",
+  "date": "2026-11-10T20:52:35+08:00",
+  "ratio_convention": "time_ratio = vendor_ms / torch_ms (lower is faster); measured_ratio = torch / vendor (higher is better), the convention the manifest uses",
+  "vendor_returns": "tuple",
+  "vendor_values_shape": [
+    8,
+    20
+  ],
+  "time_ratio": 0.2602,
+  "pair_time_ratios": [
+    0.256,
+    0.2595,
+    0.2625,
+    0.2642,
+    0.2609,
+    0.2523
+  ],
+  "measured_ratio": 3.8432,
+  "ms": {
+    "torch": 0.0747,
+    "vendor": 0.0199
+  },
+  "ratio_note": "vendor_call vs torch threshold, in-process alternating pairs, median of per-pair time ratios. Numerics are only checked structurally here (mask shape/count); a full sampler equivalence test needs the token distribution, which belongs to P5"
+}
