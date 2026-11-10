@@ -63,10 +63,11 @@ TILELANG_DECODE950 = ImplSpec(
         contiguous=True,
     ),
     kv_layouts=frozenset({"ND"}),
-    # The kernel is *written* to be captured, but ``run`` still re-binds the pool view and may
-    # refresh metadata buffers per call, so claiming capture safety now would be a lie.  The
-    # capture-guard audit (alloc/sync/compile scanning) lands in P5 and may promote this.
-    graph="unknown",
+    # Audited 2026-11-10 on Ascend950PR_9579 with two independent checks: (1) capture_guard saw zero
+    # host reads and one allocation over a run, (2) a real torch.npu.NPUGraph capture + replay returned
+    # bitwise identical output (max_abs_diff 0.0).  The per-call metadata refresh allocates (allowed
+    # under capture, the shapes are static) but never syncs, which is exactly the tier definition.
+    graph="capture_safe",
     plan_kind="attention",
     enabled_by_default=False,
     measured_ratio=None,
@@ -78,7 +79,10 @@ TILELANG_DECODE950 = ImplSpec(
     bench="bench/bench_paged_decode.py",
     requires=frozenset({"tilelang", "torch_npu"}),
     provenance="tileinfer/kernels/attention/paged_decode_ascend950.py",
-    note="decode only; head_dim in {128, 256}; NHD cache; pool-agnostic ABI (declared capacity)",
+    note=(
+        "decode only; head_dim in {128, 256}; NHD cache; pool-agnostic ABI (declared capacity).  "
+        "capture_safe verified by capture_guard (0 syncs) and by NPUGraph capture+replay (0.0 diff)"
+    ),
 )
 
 REGISTRY.register(REFERENCE)

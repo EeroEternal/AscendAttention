@@ -47,6 +47,7 @@ Two things about this file are load-bearing and non-obvious:
 """
 
 import os
+from ...utils import kernel_flag
 from typing import Any, Dict
 
 from ...utils import have_tilelang
@@ -75,7 +76,7 @@ __all__ = [
 #: TileLang target model.  ``pto`` is required on the current ``ascendc_pto`` branch (see the
 #: module docstring); older releases accept ``auto`` / ``ascendc``.  Overridable because this
 #: router has changed once already and will change again.
-ASCEND_TARGET = os.environ.get("TILEINFER_ASCEND_TARGET", "pto")
+ASCEND_TARGET = kernel_flag("ASCEND_TARGET", "pto")
 
 _KERNEL_CACHE: Dict[tuple, Any] = {}
 

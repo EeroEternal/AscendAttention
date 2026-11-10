@@ -28,6 +28,7 @@ strings that can no longer resolve the enclosing function's locals.
 
 import math
 import os
+from ...utils import kernel_flag, kernel_flag_bool
 from typing import Any, List
 
 import torch
@@ -67,7 +68,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # T5: opt-in SIMD softmax.
 #
-# ``TILEINFER_SIMD_SOFTMAX=1`` swaps the per-page online softmax in the attention kernels from the
+# ``ASCEND_ATTN_SIMD_SOFTMAX=1`` swaps the per-page online softmax in the attention kernels from the
 # SIMT reducer form to the packed ``T.simd.*`` form.  Off by default: the SIMD path is numerically
 # equivalent (device-verified, ``benchmarks/probes/simd_softmax_*_device.py``) and ~2.6x faster on
 # the decode shape, but it keeps vector time off the critical path only on the Ascend 950 shapes the
@@ -85,29 +86,29 @@ __all__ = [
 
 
 def _simd_softmax_enabled() -> bool:
-    """True when the opt-in SIMD softmax path is requested (``TILEINFER_SIMD_SOFTMAX=1``)."""
-    return os.environ.get("TILEINFER_SIMD_SOFTMAX", "").strip() not in ("", "0", "false", "False")
+    """True when the opt-in SIMD softmax path is requested (``ASCEND_ATTN_SIMD_SOFTMAX=1``)."""
+    return kernel_flag_bool("SIMD_SOFTMAX")
 
 
 def _page_pipeline_enabled() -> bool:
     """True when the opt-in double-buffered page pipeline is requested.
 
-    ``TILEINFER_PAGE_PIPELINE=1`` selects :func:`paged_decode_pipeline` as the plain-path decode
+    ``ASCEND_ATTN_PAGE_PIPELINE=1`` selects :func:`paged_decode_pipeline` as the plain-path decode
     kernel.  Unlike the SIMD softmax switch this is *not* read at trace time inside the kernel
     body: the backend passes it as an explicit spec argument, so it lands in the kernel cache key
     and can never silently mix traces built under different settings (E116-era lesson).
     """
-    return os.environ.get("TILEINFER_PAGE_PIPELINE", "").strip() not in ("", "0", "false", "False")
+    return kernel_flag_bool("PAGE_PIPELINE")
 
 
 def _sw_pipeline_stages() -> int:
-    """H74: compiler-scheduled page-loop stages (``TILEINFER_SW_PIPELINE=N``, 0 = off).
+    """H74: compiler-scheduled page-loop stages (``ASCEND_ATTN_SW_PIPELINE=N``, 0 = off).
 
     Same cache-key discipline as :func:`_page_pipeline_enabled`: the value is passed as an
     explicit spec argument so traces built under different depths can never mix.
     """
     try:
-        return max(0, int(os.environ.get("TILEINFER_SW_PIPELINE", "0") or 0))
+        return max(0, int(kernel_flag("SW_PIPELINE", "0") or 0))
     except ValueError:
         return 0
 
@@ -367,12 +368,12 @@ def paged_decode_ascend950(
                  (every access is bounded by ``kv_indptr``/``kv_indices``).
     ``kv_indptr`` / ``kv_indices`` / ``kv_last_page_len``  the engine-agnostic page list.
 
-    ``pipeline=True`` (H42-③, opt-in via ``TILEINFER_PAGE_PIPELINE=1``) returns the
+    ``pipeline=True`` (H42-③, opt-in via ``ASCEND_ATTN_PAGE_PIPELINE=1``) returns the
     double-buffered page-pipeline variant :func:`paged_decode_pipeline` instead — identical
     math, K/V L1 double-buffering so the next page's global→L1 copies overlap the current
     page's compute.  The flag is part of the caller's build spec, hence of the kernel cache key.
 
-    ``sw_pipeline=N`` (H74, opt-in via ``TILEINFER_SW_PIPELINE=N``) keeps this plain kernel but
+    ``sw_pipeline=N`` (H74, opt-in via ``ASCEND_ATTN_SW_PIPELINE=N``) keeps this plain kernel but
     turns its page loop into ``T.Pipelined(num_stages=N)`` so **the compiler** stages the
     global→L1 K/V copies across iterations.  This is the approach DeepInfer's Ascend kernels
     all use (``T.Persistent``/``T.Pipelined`` with ``num_stages``); the hand-written
@@ -2322,7 +2323,7 @@ def forward_split(
 
     import os as _os
 
-    _watch = meta.kv_indices.cpu().clone() if _os.environ.get("TILEINFER_SPLIT_DEBUG") else None
+    _watch = meta.kv_indices.cpu().clone() if kernel_flag_bool("SPLIT_DEBUG") else None
 
     def _hook(tag):
         if _watch is not None:
@@ -2552,7 +2553,7 @@ def forward_prefill(
         tile_page_lens = torch.where(
             schedule.q_lens.to(torch.int64) > 0, needed, torch.zeros_like(needed)
         ).clamp(min=0).to(torch.int32)
-        if os.environ.get("TILEINFER_PREFILL_NOSCAN_OFF"):
+        if kernel_flag_bool("PREFILL_NOSCAN_OFF"):
             # Debug-only: disable the truncation (scan every page) so the pre-truncation baseline can
             # be reproduced back to back.  Off by default; never set in serving.
             tile_page_lens = torch.full_like(tile_page_lens, 1 << 30)
@@ -3098,7 +3099,7 @@ def padded_rows(group: int) -> int:
 # default), it exists purely to keep the compiled-variant keys data-independent.  Deriving it
 # per step as next_pow2(actual splits) made every first-seen context race a ~2.5 min compile
 # against the serving path (the D56-era engine A/B: 4400/4400 prefill steps fell back to FIA).
-SPLIT_MS_COMPILE = max(1, int(os.environ.get("TILEINFER_PREFILL_SPLIT_MS", "16") or 16))
+SPLIT_MS_COMPILE = max(1, int(kernel_flag("PREFILL_SPLIT_MS", "16") or 16))
 
 _TORCH_TO_TILELANG_DTYPE = {
     torch.bfloat16: "bfloat16",
@@ -3113,18 +3114,18 @@ def declared_pool_cap(pool_pages: int) -> int:
     Pages outside ``kv_indptr``/``kv_indices`` spans are never dereferenced, so the declared
     capacity of ``KCache``/``VCache``/``kv_indices`` only has to *cover* the real pool — its
     exact value is free.  Rounding up to a power of two (or pinning it with
-    ``TILEINFER_POOL_CAP``) removes the pool size from the kernel/plan/pre-warm keys: vLLM
+    ``ASCEND_ATTN_POOL_CAP``) removes the pool size from the kernel/plan/pre-warm keys: vLLM
     derives the pool from a memory snapshot, so it drifts run to run (9425 vs 9899 pages) and
     used to silently invalidate an out-of-process pre-warm.  ``cap >= pool`` always holds; the
     caller presents the pool through :func:`pool_view`, which is a zero-copy capacity view.
     """
     pool_pages = int(pool_pages)
-    pinned = os.environ.get("TILEINFER_POOL_CAP", "").strip()
+    pinned = kernel_flag("POOL_CAP", "").strip()
     if pinned:
         cap = int(pinned)
         if cap < pool_pages:
             raise ValueError(
-                f"TILEINFER_POOL_CAP={cap} is below the real pool ({pool_pages} pages); "
+                f"ASCEND_ATTN_POOL_CAP={cap} is below the real pool ({pool_pages} pages); "
                 "the declared capacity must cover every live page"
             )
         return cap

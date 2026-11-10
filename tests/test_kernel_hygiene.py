@@ -1,16 +1,16 @@
-"""Hygiene rules for the migrated TileLang kernels, expressed as a ratchet.
+"""Hygiene rules for the migrated TileLang kernels, expressed as AST ratchets.
 
-Two rules from ``docs/plan-migrate-tileinfer.md`` §7 are only enforceable here, because the failure mode
-is "the file imports fine and computes the wrong thing later":
+Three rules from ``docs/plan-migrate-tileinfer.md`` §7 are enforceable only here, because the failure
+mode is "the file imports fine and computes the wrong thing later":
 
-* ``from __future__ import annotations`` breaks TileLang's parser (it evaluates annotations at JIT time),
-  so no kernel file may contain it;
-* a kernel that reads ``os.environ`` makes its compiled artifact depend on the *process*, which is exactly
-  the property that makes a compile key unreliable.  The migrated kernels still carry such reads; the set
-  is pinned here so it can only shrink.  Deleting an entry is the fix; adding one fails the test.
+* ``from __future__ import annotations`` breaks TileLang's parser;
+* a kernel must not read ``os.environ`` **at all** - the only seam is
+  :func:`ascend_attention.utils.kernel_flag`, which centralises the leak, logs it once, and is where the
+  flags will become explicit compile-spec arguments;
+* the flag *names* a kernel asks for are pinned, so a new one cannot appear without a review.
 
-Both checks walk the AST rather than the text: five of these files *document* the rules in their
-docstrings, and a grep would either flag the documentation or (worse) be "fixed" by deleting it.
+The AST walk (not grep) is deliberate: these files document the rules in their docstrings, and a textual
+check would either flag the documentation or be "fixed" by deleting it.
 """
 
 from __future__ import annotations
@@ -20,17 +20,17 @@ import pathlib
 
 KERNELS = pathlib.Path(__file__).resolve().parents[1] / "src" / "ascend_attention" / "kernels"
 
-#: file -> the env variable names it is still allowed to read (the ratchet, only shrinks).
-ALLOWED_ENV_READS = {
-    "attention/paged_decode.py": {"TILEINFER_ASCEND_TARGET"},
+#: file -> the flag names it is allowed to ask the seam for (the ratchet, only shrinks or moves).
+ALLOWED_FLAGS = {
+    "attention/paged_decode.py": {"ASCEND_TARGET"},
     "attention/paged_decode_ascend950.py": {
-        "TILEINFER_POOL_CAP",
-        "TILEINFER_SIMD_SOFTMAX",
-        "TILEINFER_PAGE_PIPELINE",
-        "TILEINFER_SW_PIPELINE",
-        "TILEINFER_SPLIT_DEBUG",
-        "TILEINFER_PREFILL_NOSCAN_OFF",
-        "TILEINFER_PREFILL_SPLIT_MS",
+        "POOL_CAP",
+        "SIMD_SOFTMAX",
+        "PAGE_PIPELINE",
+        "SW_PIPELINE",
+        "SPLIT_DEBUG",
+        "PREFILL_NOSCAN_OFF",
+        "PREFILL_SPLIT_MS",
     },
 }
 
@@ -43,37 +43,6 @@ def _tree(path: pathlib.Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"))
 
 
-def _env_names(tree: ast.Module) -> set:
-    names: set = set()
-    for node in ast.walk(tree):
-        # os.environ.get("NAME", ...)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            func = node.func
-            if (
-                func.attr == "get"
-                and isinstance(func.value, ast.Attribute)
-                and func.value.attr == "environ"
-                and isinstance(func.value.value, ast.Name)
-                and func.value.value.id == "os"
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)
-            ):
-                names.add(node.args[0].value)
-        # os.environ["NAME"]
-        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
-            value = node.value
-            if (
-                isinstance(value, ast.Attribute)
-                and value.attr == "environ"
-                and isinstance(value.value, ast.Name)
-                and value.value.id == "os"
-                and isinstance(node.slice.value, str)
-            ):
-                names.add(node.slice.value)
-    return names
-
-
 def test_no_future_annotations_import_in_kernels():
     offenders = []
     for path in _python_files():
@@ -84,18 +53,34 @@ def test_no_future_annotations_import_in_kernels():
     assert not offenders, f"TileLang cannot parse these: {offenders}"
 
 
-def test_env_reads_only_in_the_pinned_set():
+def test_no_direct_environment_reads_in_kernels():
+    """``os.environ`` must not appear; :func:`ascend_attention.utils.kernel_flag` is the one seam."""
+    offenders = []
+    for path in _python_files():
+        for node in ast.walk(_tree(path)):
+            if isinstance(node, ast.Attribute) and node.attr == "environ":
+                offenders.append(f"{path.relative_to(KERNELS)}:{node.lineno}")
+    assert not offenders, (
+        f"direct environment reads: {offenders}; call utils.kernel_flag(...) instead"
+    )
+
+
+def test_flag_names_are_pinned():
     observed = {}
     for path in _python_files():
-        names = _env_names(_tree(path))
-        if names:
-            observed[str(path.relative_to(KERNELS))] = names
+        names = set()
+        for node in ast.walk(_tree(path)):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in ("kernel_flag", "kernel_flag_bool"):
+                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                    names.add(node.args[0].value)
         relative = str(path.relative_to(KERNELS))
-        allowed = ALLOWED_ENV_READS.get(relative, set())
+        allowed = ALLOWED_FLAGS.get(relative, set())
         extra = names - allowed
-        assert not extra, (
-            f"{relative} reads {sorted(extra)} without an allowance; parameterise the value into the "
-            "compile spec instead of reading the environment"
-        )
-    stale = {f for f in ALLOWED_ENV_READS if f not in observed}
-    assert not stale, f"stale allowance (file no longer reads env): {sorted(stale)}"
+        assert not extra, f"{relative} asks for unpinned flags {sorted(extra)}"
+        if names:
+            observed[relative] = names
+    stale = {f for f in ALLOWED_FLAGS if f not in observed}
+    assert not stale, f"stale flag allowance: {sorted(stale)}"

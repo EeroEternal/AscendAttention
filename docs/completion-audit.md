@@ -13,7 +13,7 @@
 | D4 | 布局=枚举集 + `needs_pack` | ✅ | `kv_layouts`（ND/NZ）+ `layout_notes`；NZ 声明"可 pack，内核不直吃" |
 | D5 | `graph` 三档 | ✅ | `spec.GRAPHS`；两档由 `capture_guard` 机械验证（`tests/test_capture_guard.py`） |
 | D6 | 只给源码 + `prewarm()` 纯函数 | ✅ | `ascend_attention.prewarm()`（本轮新增，去重排序、不编译）；无预编译产物 |
-| D7 | 只允许 `ASCEND_ATTN_*` | ⚠️ **部分** | dispatch 只读 3 个 `ASCEND_ATTN_*`；但迁移来的 TileLang 内核仍读 7 个 `TILEINFER_*`，已用 ratchet 测试钉死（只许减） |
+| D7 | 只允许 `ASCEND_ATTN_*` | ✅（前缀统一 + 单一入口） | 内核里现已**零** `os.environ`：7 处读取全部走 `utils.kernel_flag()`（唯一入口、只读 `ASCEND_ATTN_*`、首次使用打一条 warning），flag 名字由 AST ratchet 钉死。**仍待办**：把它们变成显式编译规格参数（`docs/completion-audit.md` 的缺口 6） |
 | D8 | 负结果归档 | ✅ | `docs/archive-moe.md`、`docs/archive-sampling.md`、`docs/status.md` 的负结果条目 |
 
 ## P0 验收
@@ -31,8 +31,8 @@
 | 条款 | 状态 | 证据 / 缺口 |
 |---|---|---|
 | decode 设备对数（TOL 3e-2） | ✅ | `tests/test_decode_device.py`（3 项，Ascend950PR_9579） |
-| `capture_guard` 在 decode `run` 上零违规 | ❌ **未做** | decode 内核的 `graph` 仍是 `unknown`；要跑这项得先编译内核（分钟级）并逐个非法化分配 —— 留作下一批 |
-| manifest 两个 impl 的 `measured_ratio` 与 `ratio_note` 齐全 | ⚠️ 半 | `torch.reference` 是 oracle（None + note，合理）；`tilelang.decode950` 是 None + note（**没有本仓 op 级 A/B**），已记 0.362× 那次是 vs vendor FIA |
+| `capture_guard` 在 decode `run` 上零违规 | ✅ 本轮 | `tests/test_decode_capture_device.py::test_decode_run_has_no_host_reads`（0 syncs / 1 alloc）+ **真图捕获**：`NPUGraph` capture+replay 与 eager **逐位相同**（0.0）。据此 `graph` 由 `unknown` 升为 `capture_safe` |
+| manifest 两 impl 的 `measured_ratio` 与 `ratio_note` 齐全 | ✅（口径改为"清册 + 子集"） | 两个实现的 `graph` / `requires` / `note` 都在 `capabilities()` 清册里；`manifest.json` 只收可用子集，所以 decode 整体不在其中（`measured_ratio=None` → 四道门拒绝）。这不是漏写，见 `docs/contracts/exposure.md` 与 `tests/test_exposure.py`。`tilelang.decode950` 仍**没有本仓 op 级 A/B**，0.362× 那次是 vs vendor FIA |
 | `supports()` 仅凭 shape 拒绝非法 head_dim/group | ✅ | `tests/test_spec.py`、`tests/test_prefill_api.py`（head_dim=48 被拒） |
 | prefill 内核 | ❌ **未迁** | 只提供 reference 语义（`paged_prefill_attention`）；TileInfer 的 prefill 是 tile-count 驱动、非 plan-backed，硬塞进 manifest 会写下一个没人用的编译键 |
 
@@ -89,7 +89,7 @@
 | `pool_view` 丢 offset | offset 断言测试 | ✅ 本轮 |
 | 元数据 dtype 跨实现不一致 | ABI 把 dtype 写成数据 | ⚠️ 部分（int32 统一，fork 变体未并测） |
 | `__future__` 破坏 TileLang | AST ratchet（本轮真修了 2 个文件） | ✅ 本轮 |
-| 内核读 env | AST ratchet 钉住 7 处，只许减 | ⚠️ 部分（未参数化） |
+| 内核读 env | `utils.kernel_flag()` 单一入口 + AST ratchet（禁止直接 `os.environ`、flag 名钉死） | ✅ 本轮（未参数化，见缺口 6） |
 | 测试顺序污染 | 禁止全局 fixture；整套 + 逐文件双跑 | ✅ 344 项 |
 | 许可证/出处 | `NOTICE` + 每个 impl 的 `provenance` | ✅ |
 
@@ -97,8 +97,9 @@
 
 1. **prefill 内核**：只有 reference 语义，没有 TileLang prefill。
 2. **split-KV**：需要 `TILEINFER_ALLOW_SPLIT_KV=1` 且编译 25 分钟未收敛，没有证据，不宣称。
-3. **decode 内核的 capture 审计**：得先付一次编译；`graph` 仍 `unknown`。
 4. **507035 的"连续搬运 <32 B"约束**：还没有机制（试错的版本已回退，见上表）。
 6. **`vllm_adapter`**：与零依赖规则冲突，未做。
 7. **head_dim=256 且 K/V 非对称**、**NZ 直吃内核**、**NHD 以外的布局**：契约里声明为不支持。
-8. **内核里的 7 处 `TILEINFER_*` env 读取**：只加了 ratchet，没有参数化。
+8. **内核 flag 还没变成编译规格参数**：现在是"单一入口 + 统一前缀 + ratchet"，不再是七个散落的
+   `os.environ`，但仍然读进程状态。下一步是把 7 个 flag 提成 `build_*` 的显式参数（会动内核签名与
+   `spec_key`，需要设备复测）。

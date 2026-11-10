@@ -6,12 +6,17 @@ goes through here instead of hard-coding ``"npu"`` anywhere.
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Optional, Union
 
 import torch
 
 __all__ = [
+    "KERNEL_FLAG_PREFIX",
     "is_npu_available",
+    "kernel_flag",
+    "kernel_flag_bool",
     "npu_device_count",
     "resolve_device",
     "device_name",
@@ -109,6 +114,44 @@ def synchronize(device: Optional[torch.device] = None) -> None:
             torch.cuda.synchronize(device)
     except Exception:
         pass
+
+
+#: Prefix for the few kernel flags that still come from the environment.  One prefix, one seam.
+KERNEL_FLAG_PREFIX = "ASCEND_ATTN_"
+
+#: Flags already reported once, so a noisy log cannot drown the run.
+_LOGGED_FLAGS: set = set()
+
+
+def kernel_flag(name: str, default: str = "") -> str:
+    """The **only** way a kernel module may read process state.
+
+    Why this exists instead of a direct ``os.environ`` call in the kernel: a compiled artifact whose shape
+    depends on the environment makes its compile key a lie (``TILEINFER_SW_PIPELINE=2`` and ``=3`` would
+    otherwise share a cache entry and silently reuse the wrong trace).  Centralising the read does not
+    fix that by itself - it makes the leak *one* auditable seam instead of seven scattered ones, and it
+    is where the flags will become explicit compile-spec arguments (``docs/completion-audit.md`` D7).
+
+    Semantics are the migrated kernels' own: unset/empty means the default; ``{0,false,no,off}`` means
+    false for boolean callers (they compare with :func:`kernel_flag_bool`).
+    """
+    key = KERNEL_FLAG_PREFIX + name
+    raw = os.environ.get(key)
+    if raw is None and default == "":
+        return ""
+    value = raw if raw is not None else default
+    if key not in _LOGGED_FLAGS and raw is not None:
+        _LOGGED_FLAGS.add(key)
+        logger = logging.getLogger("ascend_attention.kernels")
+        logger.warning("%s=%r is process state that affects a compiled artifact; see docs/perf-rules.md",
+                       key, raw)
+    return value
+
+
+def kernel_flag_bool(name: str, default: bool = False) -> bool:
+    """Boolean form of :func:`kernel_flag` (``1/true/yes/on`` are true)."""
+    raw = kernel_flag(name, "1" if default else "")
+    return raw.strip().lower() not in ("", "0", "false", "no", "off")
 
 
 def have_tilelang() -> bool:
