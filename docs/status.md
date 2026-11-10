@@ -85,3 +85,11 @@ op 级与端到端分开记；**端到端没过关的 op 不进默认**。
 - P3：MoE 三个 op（`slot_layout` 2.569×、`prenz` 负结果归档、`shared_fold`），先判决接不接。
 - P4：采样（`vendor_call` 形态）。
 - P5：端到端账本 + TileInfer 反向接入等价证明 + 图捕获守卫审计。
+
+## attention 族的归档（`docs/archive-attention.md`）
+
+- `page_pipeline`：TileInfer 侧**没有任何 A/B 记录**（`grep PAGE_PIPELINE docs/` 为空）→ opt-in、默认关，
+  通过 `utils.kernel_flag("PAGE_PIPELINE")` 读取，一次 A/B 即可翻案。
+- `simd_softmax`：TileInfer 记 ~2.6×，但是**单窗探针**不是交替对 → 本仓 `measured_ratio` 仍为 `None`。
+- `split_kv`：3× 但两次把设备卡死（vector-core exception）、25 分钟编译扫描未收敛 → **连候选都不注册**。
+- `paged_decode.py`（910B fork）：死代码，留作对照物与共享设施的测试对象。
