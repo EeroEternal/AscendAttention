@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ._version import __version__
+from .capture import capture_guard, check_capture
 from .dispatch import Decision, describe, select
 from .device import DeviceProfile, current as current_device, profile as device_profile
 from .manifest import manifest as _manifest
@@ -52,6 +53,8 @@ __all__ = [
     "ImplSpec",
     "ShapeSpec",
     "DeviceProfile",
+    "capture_guard",
+    "check_capture",
 ]
 
 
