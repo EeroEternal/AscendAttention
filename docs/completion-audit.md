@@ -22,7 +22,7 @@
 |---|---|---|
 | 无 torch_npu/tilelang 也能 import | ✅（torch_npu 例外，已说明） | `test_import_hygiene.py::test_import_pulls_no_engine_and_no_accelerator`（子进程断言 sys.modules 无 vllm/vllm_ascend/tilelang） |
 | `manifest()` 可 json.dumps，`supports()` 无需张量 | ✅ | `tests/test_manifest.py`、`tests/test_spec.py` |
-| `plan/run` 在 reference 上跑通 decode 与 prefill 全分支 + fp64 oracle（尾页 poison 1e4） | ✅ 本轮补齐 | `tests/test_attention_api.py`（decode）、`tests/test_prefill_api.py`（prefill/append + fp64 oracle）、`tests/test_acceptance_mechanisms.py::test_partial_last_page_padding_does_not_change_the_result`（1e4 poison 逐位不变） |
+| `plan/run` 在 reference 上跑通 decode 与 prefill 全分支 + fp64 oracle（尾页 poison 1e4） | ✅ | `tests/test_decode_fp64.py`（**独立 fp64 定义式**，不共用实现里的页展开代码，1e-6 + 反例）、`tests/test_attention_api.py`（decode 对 reference）、`tests/test_prefill_api.py`（prefill/append + fp64 oracle）、`tests/test_acceptance_mechanisms.py::test_partial_last_page_padding_does_not_change_the_result`（1e4 poison 逐位不变） |
 | `capture_guard()` 抓得住 `torch.empty` | ✅ 本轮补齐 | `tests/test_capture_guard.py`（8 项，含 device 侧 `eager_only` 实证） |
 | 零 `import vllm`；单文件与整套都绿 | ✅ | 344 tests；`test_import_hygiene` 走 AST 全包扫描 |
 
