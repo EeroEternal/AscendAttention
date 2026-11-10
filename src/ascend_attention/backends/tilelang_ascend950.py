@@ -69,6 +69,28 @@ except Exception as _exc:  # pragma: no cover
     _ASCEND950_IMPORT_ERROR = _exc
 
 
+
+def decode_spec_key(
+    *,
+    batch_size: int,
+    num_kv_heads: int,
+    gqa_group_size: int,
+    head_dim: int,
+    page_size: int,
+    pool_cap: int,
+):
+    """The per-plan identity of a compiled decode kernel.
+
+    Scope, stated precisely: this key guards a **single** plan's ``backend_state`` (it decides whether the
+    already-built kernel still describes the current call), it is not a process-wide kernel cache.  That
+    is why it may be narrower than the full compile signature - the dtype and layout are fixed by the
+    tensors the plan captured, and a different dtype means a different plan object, not a cache hit.
+
+    ``pool_cap`` is the **quantised** capacity, so a pool that grows within one bucket does not rebuild.
+    """
+    return (batch_size, num_kv_heads, gqa_group_size, head_dim, page_size, pool_cap)
+
+
 @register_backend
 class TileLangAscend950Backend(AttentionBackend):
     """Paged decode on Ascend 950 via the official TileLang wheel."""
@@ -132,13 +154,13 @@ class TileLangAscend950Backend(AttentionBackend):
         # capacity, which covers but does not equal the real pool — so a plan survives the
         # run-to-run pool drift of the engine's memory snapshot.
         pool_cap = declared_pool_cap(int(k_cache.shape[0]))
-        spec_key = (
-            plan.batch_size,
-            plan.num_kv_heads,
-            plan.gqa_group_size,
-            plan.head_dim,
-            plan.page_size,
-            pool_cap,
+        spec_key = decode_spec_key(
+            batch_size=plan.batch_size,
+            num_kv_heads=plan.num_kv_heads,
+            gqa_group_size=plan.gqa_group_size,
+            head_dim=plan.head_dim,
+            page_size=plan.page_size,
+            pool_cap=pool_cap,
         )
         if state.get("spec_key") == spec_key:
             return plan

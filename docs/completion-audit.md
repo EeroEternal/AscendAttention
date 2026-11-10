@@ -79,12 +79,12 @@
 |---|---|---|
 | 尾页 padding 未 mask | 1e4 poison + 逐位比较 | ✅ 本轮 |
 | OOB gather 返回垃圾 | `RaggedMetadata.validate()` 在 plan 期校验 | ✅ 既有 |
-| 子 32 字节描述符 507035 | `ShapeSpec` 的 `min_group`/`min_stride_bytes` | ❌ **未实现**（group=4 的用例只覆盖到语义，未覆盖字节约束） |
+| 子 32 字节描述符 507035 | `ShapeSpec` 的 `min_group`/`min_stride_bytes` | ❌ **未实现，且试过一版是错的**：先按"张量最内层 stride 字节数"实现，跑既有 decode 测试立刻发现 bf16 池的最内层 stride 本来就是 1 元素 = 2 B，等于把所有合法输入全拒了。这条坑的真实含义是**单次 GM→UB 搬运的连续字节数** < 32 B，不是张量 stride；已回退，不留下一个看着像机制的错门 |
 | AIV 行号不可见 → causal 阈值错 | host 预算阈值 + 上下半区测试 | ⚠️ 内核里按元素算，未做专门契约测试 |
 | 三处 bf16 截断 | 契约测试断言 dtype | ✅ 本轮 |
 | 两个三角 | 两条契约测试（对角掩码） | ✅ 本轮 |
 | 编译占 GIL | `prewarm()` 纯函数 | ✅ 本轮 |
-| 编译键漏维度 | `spec_key` + 逐维扰动测试 | ⚠️ 有 `spec_key`，**无逐维扰动测试** |
+| 编译键漏维度 | `decode_spec_key` + 逐维扰动测试 | ✅ 本轮（并写明它只是**单 plan** 的身份，不是进程级缓存） |
 | 池容量击穿 | `abi` 量化 capacity | ✅ 既有 |
 | `pool_view` 丢 offset | offset 断言测试 | ✅ 本轮 |
 | 元数据 dtype 跨实现不一致 | ABI 把 dtype 写成数据 | ⚠️ 部分（int32 统一，fork 变体未并测） |
@@ -98,8 +98,7 @@
 1. **prefill 内核**：只有 reference 语义，没有 TileLang prefill。
 2. **split-KV**：需要 `TILEINFER_ALLOW_SPLIT_KV=1` 且编译 25 分钟未收敛，没有证据，不宣称。
 3. **decode 内核的 capture 审计**：得先付一次编译；`graph` 仍 `unknown`。
-4. **`ShapeSpec` 的 `min_group`/`min_stride_bytes`**：507035 那条坑还没有机制。
-5. **编译键逐维扰动测试**。
+4. **507035 的"连续搬运 <32 B"约束**：还没有机制（试错的版本已回退，见上表）。
 6. **`vllm_adapter`**：与零依赖规则冲突，未做。
 7. **head_dim=256 且 K/V 非对称**、**NZ 直吃内核**、**NHD 以外的布局**：契约里声明为不支持。
 8. **内核里的 7 处 `TILEINFER_*` env 读取**：只加了 ratchet，没有参数化。
