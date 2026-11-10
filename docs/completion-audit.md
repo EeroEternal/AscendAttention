@@ -1,0 +1,105 @@
+# 完成度审计（D1–D8 + 各批验收 + §7 机制）
+
+这份文件不是总结，是**对账**：计划文档里每一条验收，要么给出证据（测试名 / 产物路径 / 数字），
+要么明写"没做"和为什么。任何一条被写成"已完成"却没有可点的证据，都算这份审计失败。
+
+## D1–D8：决策与落地
+
+| # | 决策 | 落地情况 | 证据 |
+|---|---|---|---|
+| D1 | 包名 `ascend_attention` | ✅ | `src/ascend_attention/`、`pyproject.toml`、`tests/test_import_hygiene.py` |
+| D2 | per-op plan | ✅ | `plan()` 一次只产出一个 `OpPlan`；无 per-stage 聚合 |
+| D3 | 状态由 caller 传入 | ✅ | `k_cache`/`v_cache` 由调用方持有并被 plan 捕获；库内无 `self._state` |
+| D4 | 布局=枚举集 + `needs_pack` | ✅ | `kv_layouts`（ND/NZ）+ `layout_notes`；NZ 声明"可 pack，内核不直吃" |
+| D5 | `graph` 三档 | ✅ | `spec.GRAPHS`；两档由 `capture_guard` 机械验证（`tests/test_capture_guard.py`） |
+| D6 | 只给源码 + `prewarm()` 纯函数 | ✅ | `ascend_attention.prewarm()`（本轮新增，去重排序、不编译）；无预编译产物 |
+| D7 | 只允许 `ASCEND_ATTN_*` | ⚠️ **部分** | dispatch 只读 3 个 `ASCEND_ATTN_*`；但迁移来的 TileLang 内核仍读 7 个 `TILEINFER_*`，已用 ratchet 测试钉死（只许减） |
+| D8 | 负结果归档 | ✅ | `docs/archive-moe.md`、`docs/archive-sampling.md`、`docs/status.md` 的负结果条目 |
+
+## P0 验收
+
+| 条款 | 状态 | 证据 |
+|---|---|---|
+| 无 torch_npu/tilelang 也能 import | ✅（torch_npu 例外，已说明） | `test_import_hygiene.py::test_import_pulls_no_engine_and_no_accelerator`（子进程断言 sys.modules 无 vllm/vllm_ascend/tilelang） |
+| `manifest()` 可 json.dumps，`supports()` 无需张量 | ✅ | `tests/test_manifest.py`、`tests/test_spec.py` |
+| `plan/run` 在 reference 上跑通 decode 与 prefill 全分支 + fp64 oracle（尾页 poison 1e4） | ✅ 本轮补齐 | `tests/test_attention_api.py`（decode）、`tests/test_prefill_api.py`（prefill/append + fp64 oracle）、`tests/test_acceptance_mechanisms.py::test_partial_last_page_padding_does_not_change_the_result`（1e4 poison 逐位不变） |
+| `capture_guard()` 抓得住 `torch.empty` | ✅ 本轮补齐 | `tests/test_capture_guard.py`（8 项，含 device 侧 `eager_only` 实证） |
+| 零 `import vllm`；单文件与整套都绿 | ✅ | 344 tests；`test_import_hygiene` 走 AST 全包扫描 |
+
+## P1 验收
+
+| 条款 | 状态 | 证据 / 缺口 |
+|---|---|---|
+| decode 设备对数（TOL 3e-2） | ✅ | `tests/test_decode_device.py`（3 项，Ascend950PR_9579） |
+| `capture_guard` 在 decode `run` 上零违规 | ❌ **未做** | decode 内核的 `graph` 仍是 `unknown`；要跑这项得先编译内核（分钟级）并逐个非法化分配 —— 留作下一批 |
+| manifest 两个 impl 的 `measured_ratio` 与 `ratio_note` 齐全 | ⚠️ 半 | `torch.reference` 是 oracle（None + note，合理）；`tilelang.decode950` 是 None + note（**没有本仓 op 级 A/B**），已记 0.362× 那次是 vs vendor FIA |
+| `supports()` 仅凭 shape 拒绝非法 head_dim/group | ✅ | `tests/test_spec.py`、`tests/test_prefill_api.py`（head_dim=48 被拒） |
+| prefill 内核 | ❌ **未迁** | 只提供 reference 语义（`paged_prefill_attention`）；TileInfer 的 prefill 是 tile-count 驱动、非 plan-backed，硬塞进 manifest 会写下一个没人用的编译键 |
+
+## P2 验收
+
+| 条款 | 状态 | 证据 |
+|---|---|---|
+| chunk 链对 fp64 oracle 逐段过 | ✅ | `tests/test_fla_ops.py`（kkt / solve_tril / wu 各自的 fp64 定义式） |
+| 四个"静默杀手"各一条测试 | ✅ 本轮补齐 | `tests/test_fla_contract.py`（`safe_exp` 单边钳位、`where` vs 乘法 NaN、两个三角、三处 bf16 截断、参数顺序） |
+| 状态张量全部由 caller 传入 | ✅ | `chunk_gated_delta_rule(..., initial_state=)`；库内无模块级状态 |
+| `conv_update` 的 `graph` 声明与实测一致 | ✅ | `test_capture_guard.py::test_eager_only_declaration_is_honest_for_the_conv_baseline`（设备侧捕获到 `aten::_to_copy` 回读） |
+| delta_h / chunk_o 的独立 oracle | ✅ 本轮补齐 | `test_fla_contract.py::test_chunked_chain_matches_the_recurrent_form`（分块链 vs 逐 token 递归，含尾块，相对误差 <1e-5） |
+
+## P3 验收
+
+| 条款 | 状态 | 证据 |
+|---|---|---|
+| MoE manifest 至少一个 torch 实现跑通两种专家分布 | ✅ | `tests/test_moe_ops.py`（均衡 + 单专家热点 + 空专家） |
+| slot 哨兵语义（`sorted_ids == rows_static` 表示空 tile）有契约测试 | ✅ | 同上，并给出"compact→slot 映射"与独立实现的逐项比对 |
+| 未接入的高性能候选显示 `enabled_by_default=False` 且 note 可读 | ✅ | `grouped_gemm`/`down_prenz` 未注册（归档）；`moe_prenz_pack` 的 note 写明等价关系 |
+
+## P4 验收
+
+| 条款 | 状态 | 证据 / 缺口 |
+|---|---|---|
+| 三个实现同族共存 | ⚠️ **两个** | `sampling_topk_threshold`（torch + vendor）与 `sampling_greedy`；`fused_sample` **归档**，理由见 `docs/archive-sampling.md`（零消费者、无端到端数字、`vocab%128`、`ub_cap` 507035） |
+| 按 `(vocab, batch, do_sample)` 分流且有测试 | ✅（`do_sample` + 形状/dtype 门） | `sampler_for()` + `tests/test_sampling_topk.py`（路由、dtype 门、k 越界） |
+| 两个来源（op 级 / end-to-end）分开记 | ✅ | 采样 3.8432× 是 **op 级**且 note 明写口径；无 e2e 数字就写无 |
+| 无 `deep_select` 的机器上该实现消失而不是报错 | ✅ 本轮补齐 | dispatch 新增 `requires` 探测（`find_spec`，缓存）；`test_vendor_impl_is_invisible_when_its_module_is_missing` |
+
+## P5 验收
+
+| 条款 | 状态 | 证据 / 缺口 |
+|---|---|---|
+| 发布 `manifest.json`（含比值与 note） | ✅ | `src/ascend_attention/manifest.json`（8 ops，schema 1） |
+| 可选 `vllm_adapter` | ❌ **未做** | 与"全仓零 vllm 依赖"直接冲突，且需要 vLLM 的 ABI 名。若要做，只能放 `integrations/`（不进 wheel、不被 AST 测试扫描）并单独声明依赖；本轮选择不做并记录 |
+| TileInfer 反向改造为依赖本仓 | ✅（有限但真实） | `tileinfer/vllm/ops/extern.py` + 2 行接线，默认 off；off/on 逐位相同（8 组 sha256 + 双方测试） |
+| `TILEINFER_OPS_CANDIDATES=off/on` 数字不变 | ✅（算子级 + 测试级） | 见 `docs/reverse-integration.md` §3–§4；**服务级 A/B 明确不做**（平台语义） |
+| manifest 驱动全部 15 个绑定（或 note 缺口） | ⚠️ 13 个绑定、8 覆盖、5 缺口 | `tests/test_binding_coverage.py` 机械校验；计划里的"15"实为 13，代码为准 |
+
+## §7 机制表：哪些真的成了机制
+
+| 坑 | 机制 | 状态 |
+|---|---|---|
+| 尾页 padding 未 mask | 1e4 poison + 逐位比较 | ✅ 本轮 |
+| OOB gather 返回垃圾 | `RaggedMetadata.validate()` 在 plan 期校验 | ✅ 既有 |
+| 子 32 字节描述符 507035 | `ShapeSpec` 的 `min_group`/`min_stride_bytes` | ❌ **未实现**（group=4 的用例只覆盖到语义，未覆盖字节约束） |
+| AIV 行号不可见 → causal 阈值错 | host 预算阈值 + 上下半区测试 | ⚠️ 内核里按元素算，未做专门契约测试 |
+| 三处 bf16 截断 | 契约测试断言 dtype | ✅ 本轮 |
+| 两个三角 | 两条契约测试（对角掩码） | ✅ 本轮 |
+| 编译占 GIL | `prewarm()` 纯函数 | ✅ 本轮 |
+| 编译键漏维度 | `spec_key` + 逐维扰动测试 | ⚠️ 有 `spec_key`，**无逐维扰动测试** |
+| 池容量击穿 | `abi` 量化 capacity | ✅ 既有 |
+| `pool_view` 丢 offset | offset 断言测试 | ✅ 本轮 |
+| 元数据 dtype 跨实现不一致 | ABI 把 dtype 写成数据 | ⚠️ 部分（int32 统一，fork 变体未并测） |
+| `__future__` 破坏 TileLang | AST ratchet（本轮真修了 2 个文件） | ✅ 本轮 |
+| 内核读 env | AST ratchet 钉住 7 处，只许减 | ⚠️ 部分（未参数化） |
+| 测试顺序污染 | 禁止全局 fixture；整套 + 逐文件双跑 | ✅ 344 项 |
+| 许可证/出处 | `NOTICE` + 每个 impl 的 `provenance` | ✅ |
+
+## 还没做的（明确清单）
+
+1. **prefill 内核**：只有 reference 语义，没有 TileLang prefill。
+2. **split-KV**：需要 `TILEINFER_ALLOW_SPLIT_KV=1` 且编译 25 分钟未收敛，没有证据，不宣称。
+3. **decode 内核的 capture 审计**：得先付一次编译；`graph` 仍 `unknown`。
+4. **`ShapeSpec` 的 `min_group`/`min_stride_bytes`**：507035 那条坑还没有机制。
+5. **编译键逐维扰动测试**。
+6. **`vllm_adapter`**：与零依赖规则冲突，未做。
+7. **head_dim=256 且 K/V 非对称**、**NZ 直吃内核**、**NHD 以外的布局**：契约里声明为不支持。
+8. **内核里的 7 处 `TILEINFER_*` env 读取**：只加了 ratchet，没有参数化。

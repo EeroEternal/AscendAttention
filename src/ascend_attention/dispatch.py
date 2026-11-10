@@ -60,6 +60,25 @@ _FALSE = {"", "0", "false", "off", "no"}
 #: Cached device-profile name; probing ``/dev`` costs a ``stat`` and dispatch may not do that per call.
 _DEVICE_NAME: Optional[str] = None
 
+#: ``module -> bool`` result of the one ``find_spec`` probe per module; never imports anything.
+_HAVE_MODULE: Dict[str, bool] = {}
+
+
+def module_available(name: str) -> bool:
+    """Is ``name`` importable?  ``find_spec`` only - a spec probe does not execute the module.
+
+    The result is cached because ``find_spec`` walks ``sys.path`` (a few ``stat`` calls) and dispatch is
+    allowed to be cheap; a missing module cannot appear later in the same process without a restart.
+    """
+    if name not in _HAVE_MODULE:
+        import importlib.util
+
+        try:
+            _HAVE_MODULE[name] = importlib.util.find_spec(name) is not None
+        except (ImportError, ValueError):
+            _HAVE_MODULE[name] = False
+    return _HAVE_MODULE[name]
+
 
 def current_device_name() -> str:
     """The profile name dispatch compares ``ImplSpec.device`` against (cached after the first call)."""
@@ -159,6 +178,11 @@ def select(entry: OpEntry, **query: Any) -> Decision:
             continue
         if not impl.enabled_by_default:
             rejected.append((impl.impl, "off by default"))
+            continue
+        # ③ availability: an impl whose optional dependency is absent must not be chosen at all
+        missing = [name for name in sorted(impl.requires) if not module_available(name)]
+        if missing:
+            rejected.append((impl.impl, f"missing {', '.join(missing)}"))
             continue
         # ③ device acceptance: a kernel written for the 950 must not be chosen on a 910B or a CPU
         if impl.device not in ("any", current_device_name()):

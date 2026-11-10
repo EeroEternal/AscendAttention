@@ -159,3 +159,23 @@ def test_dtype_gate_applies_without_an_explicit_shape():
         dtype="float32",
     )
     assert p.impl == "torch.topk_threshold", p.impl
+
+
+def test_vendor_impl_is_invisible_when_its_module_is_missing(monkeypatch):
+    """``requires`` is checked with ``find_spec`` at dispatch time: absent dependency -> not a candidate.
+
+    The alternative (select it, then explode inside the planner) is what the first implementation did, and
+    on a box without ``deep_select`` a plain ``plan()`` would raise instead of falling back.
+    """
+    from ascend_attention import dispatch, plan
+
+    monkeypatch.setitem(dispatch._HAVE_MODULE, "deep_select", False)
+    p = plan("sampling_topk_threshold", batch=2, vocab=32, k=3, dtype="bfloat16")
+    assert p.impl == "torch.topk_threshold", p.impl
+    decision = dispatch.select(
+        __import__("ascend_attention.spec", fromlist=["REGISTRY"]).REGISTRY.entry("sampling_topk_threshold"),
+        shape=(2, 32),
+        dtype="bfloat16",
+    )
+    reasons = dict(decision.rejected)
+    assert "missing deep_select" in reasons.get("vendor.deep_select", ""), reasons

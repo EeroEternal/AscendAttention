@@ -29,8 +29,6 @@ decorated source and loses the enclosing scope (measured: ``NameError: name 'C' 
 against ``tests/test_gdn_causal_conv1d.py`` before it may become a default (C2/E4).
 """
 
-from __future__ import annotations
-
 import torch
 
 __all__ = [

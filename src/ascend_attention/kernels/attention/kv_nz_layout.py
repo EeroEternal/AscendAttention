@@ -18,8 +18,6 @@ NZ fractal 布局存储,L1→L0B 可直通:
 框架的第二步,达到微基准门槛前不接入任何在役路径。
 """
 
-from __future__ import annotations
-
 import torch
 
 NZ_BLOCK = 16

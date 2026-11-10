@@ -55,6 +55,7 @@ __all__ = [
     "DeviceProfile",
     "capture_guard",
     "check_capture",
+    "prewarm",
 ]
 
 
@@ -141,3 +142,24 @@ def capability_manifest(**kwargs: Any) -> Dict[str, Any]:
 
 def device() -> DeviceProfile:
     return current_device()
+
+
+def prewarm(keys: Iterable[str]) -> Tuple[str, ...]:
+    """Deduplicate and order the compile keys a platform should pay for, **without compiling**.
+
+    A compile takes 70-100 s of GIL (``architecture.md:185-197``), which inside a serving process looks
+    like a hang, so this library never compiles in the background and never on a call path: ``plan``
+    records which artifact it needs in :meth:`OpPlan.spec_key`, and this function is the pure-data step
+    that tells the platform what that set is.  Calling it from a warm-up task outside the request path is
+    the intended use; calling it is cheap and side-effect free, so calling it twice is harmless.
+
+    Args:
+        keys: whatever the caller collected from ``plan(...).spec_key()``; duplicates are fine.
+
+    Returns:
+        The distinct keys, sorted, as a tuple.  Sorting matters: it makes the prewarm log diffable
+        between two boots.
+    """
+    if keys is None or isinstance(keys, (str, bytes)):
+        raise TypeError("prewarm takes an iterable of compile keys, not a single string")
+    return tuple(sorted({str(key) for key in keys}))
