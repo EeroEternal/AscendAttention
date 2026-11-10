@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ascend-attention"
+description = "Engine-agnostic Ascend fused operators: capabilities, plans, and compiled kernels"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "AscendAttention contributors" }]
+keywords = ["ascend", "npu", "tilelang", "attention", "inference", "operators"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Intended Audience :: Developers",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dynamic = ["version"]
+
+# The library itself needs only torch: capability query, planning and the pure-torch baselines are
+# host-side.  The NPU runtime and the TileLang toolchain are extras, because the contract is
+# "no NPU, no toolchain, still importable and still able to explain what is missing".
+# Pinned to the versions the reference box runs (torch 2.13 / torch_npu 2.13 / tilelang 0.1.15 /
+# CANN 9.3) so a local install cannot silently drift from TileInfer or AscendPlatform.
+dependencies = ["torch>=2.5"]
+
+[project.optional-dependencies]
+npu = ["torch_npu>=2.5"]
+tilelang = ["tilelang>=0.1.15"]
+dev = ["pytest>=7"]
+# The platform repo is a consumer, never a dependency: this extra only exists for the cross-repo
+# manifest contract test, and it is deliberately not installable from this package.
+dev-platform = []
+
+[project.urls]
+Homepage = "https://github.com/EeroEternal/AscendAttention"
+
+[tool.setuptools.dynamic]
+version = { attr = "ascend_attention._version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ascend_attention*"]
+
+[tool.setuptools.package-data]
+ascend_attention = ["manifest.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+  "npu: test requires an Ascend NPU",
+  "tilelang: test requires the TileLang toolchain",
+]

@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "library": {
+    "name": "ascend-attention",
+    "version": "0.1.0",
+    "requires_platform": ">=0.1,<0.2"
+  },
+  "ops": [
+    {
+      "name": "gdn_gating",
+      "shapes": {
+        "ndim": 2,
+        "dims": [
+          null,
+          {
+            "min": 1
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": false,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_gdn_gating.py",
+      "impl": "torch.gating",
+      "impls": [
+        "torch.gating"
+      ],
+      "form": "torch"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+AscendAttention
+Copyright 2026 AscendAttention contributors
+
+This product includes software developed as part of the TileInfer project
+(https://github.com/EeroEternal/TileInfer) and the AscendPlatform project
+(https://github.com/EeroEternal/AscendPlatform), both licensed under the
+Apache License, Version 2.0.
+
+Migrated files retain their original docstrings, including the ``file:line``
+references and measurement notes that record where each behaviour came from.
+Per-file provenance is recorded in the ``provenance`` field of every
+implementation spec (see ``src/ascend_attention/spec.py``) and in
+``MIGRATION_LOG.md``.
+
+Files migrated verbatim (only relative import paths changed) from TileInfer at
+commit 339969a:
+
+  src/ascend_attention/utils.py                        <- tileinfer/utils.py
+  src/ascend_attention/metadata.py                     <- tileinfer/metadata.py
+  src/ascend_attention/plan.py                         <- tileinfer/plan.py
+  src/ascend_attention/api.py                          <- tileinfer/attention/api.py
+  src/ascend_attention/backends/base.py                <- tileinfer/attention/backends/base.py
+  src/ascend_attention/backends/reference.py           <- tileinfer/attention/backends/reference.py
+  src/ascend_attention/testing/*.py                    <- tileinfer/testing/*.py
+  src/ascend_attention/ops/gdn/gating.py               <- tileinfer/kernels/gdn/__init__.py
+  tests/test_attention_api.py                          <- tests/test_attention_api.py
+  tests/test_gdn_gating.py                             <- tests/test_gdn_gating.py
+
+The ABI helpers in ``src/ascend_attention/abi.py`` are a consolidation of
+``tileinfer/kernels/attention/paged_decode_ascend950.py`` (``padded_rows``,
+``declared_pool_cap``, ``pool_view``) and ``tileinfer/serving/buckets.py``
+(``capacity_view``).
