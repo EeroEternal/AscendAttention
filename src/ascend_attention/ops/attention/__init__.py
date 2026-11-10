@@ -190,3 +190,135 @@ def run_decode(p: OpPlan, q: torch.Tensor, **kw: Any) -> torch.Tensor:
 
 
 REGISTRY.planner(OP, plan_decode)
+
+
+# ---------------------------------------------------------------------------------------------
+# Prefill: the reference implementation is the whole story in this phase, and that is a decision.
+# ---------------------------------------------------------------------------------------------
+PREFILL = "paged_prefill_attention"
+
+PREFILL_REFERENCE = ImplSpec(
+    op=PREFILL,
+    impl="torch.reference",
+    form="torch",
+    device="any",
+    shape=ShapeSpec(
+        ndim=4,
+        dims=(dim_min(1), dim_min(1), dim_min(1), dim_in(8, 16, 32, 64, 128, 256)),
+        dtypes=frozenset({"bfloat16", "float16", "float32"}),
+        contiguous=False,
+    ),
+    kv_layouts=frozenset({"ND"}),
+    # The reference loops over requests and chunks in Python: correct, but a captured graph would
+    # freeze a tile count that a real prefill step does not have.
+    graph="eager_only",
+    plan_kind="attention",
+    enabled_by_default=True,
+    measured_ratio=1.0,
+    bench="bench/bench_prefill_reference.py",
+    ratio_note=(
+        "definitional 1.0: the only prefill implementation in this phase.  The TileLang prefill kernel "
+        "is deliberately not migrated yet - TileInfer's prefill is a tile-count-driven path that is "
+        "*not* plan-backed (backends/tilelang_ascend950.py:89-95), and pretending otherwise would put a "
+        "compile key in the manifest that no run uses."
+    ),
+    provenance="tileinfer/attention/backends/reference.py + tileinfer/testing/reference.py",
+    note=(
+        "prefill/append over a paged cache; causal by default; qo_len per request via qo_indptr or a "
+        "uniform qo_len.  Slower than a kernel by construction: it exists so the interface has a "
+        "second mode, not to be fast."
+    ),
+)
+
+REGISTRY.register(PREFILL_REFERENCE)
+
+
+def plan_prefill(impl: ImplSpec, **pure: Any) -> OpPlan:
+    """Plan one prefill/append step: ``q`` is ``[batch, num_qo_heads, qo_len, head_dim]``."""
+    k_cache = pure.get("k_cache")
+    v_cache = pure.get("v_cache")
+    if k_cache is None or v_cache is None:
+        raise ValueError("paged_prefill_attention.plan needs k_cache and v_cache")
+    num_qo_heads = int(pure["num_qo_heads"])
+    num_kv_heads = int(pure["num_kv_heads"])
+    head_dim = int(pure["head_dim"])
+    qo_indptr = pure.get("qo_indptr")
+    if qo_indptr is not None:
+        batch = int(qo_indptr.numel()) - 1
+        qo_len = int(qo_indptr[1:].sub(qo_indptr[:-1]).max())
+    elif pure.get("qo_len") is not None:
+        batch = int(pure.get("batch", 1))
+        qo_len = int(pure["qo_len"])
+    else:
+        raise ValueError("paged_prefill_attention.plan needs qo_indptr or (batch, qo_len)")
+    if qo_len < 1:
+        raise ValueError(f"paged_prefill_attention: qo_len must be >= 1, got {qo_len}")
+
+    dtype_name = str(pure.get("dtype") or k_cache.dtype).rsplit(".", 1)[-1]
+    if impl.shape is not None and not impl.shape.matches(
+        (max(batch, 1), num_qo_heads, qo_len, head_dim), dtype_name
+    ):
+        raise ValueError(
+            f"paged_prefill_attention/{impl.impl}: q=({batch}, {num_qo_heads}, {qo_len}, {head_dim}) "
+            f"dtype={dtype_name} is outside the declared contract"
+        )
+
+    from ...api import BatchAttention
+
+    torch_dtype = {
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "float32": torch.float32,
+    }.get(dtype_name)
+    if torch_dtype is None:
+        raise ValueError(f"paged_prefill_attention: unsupported dtype {dtype_name!r}")
+    attn = BatchAttention(backend=_backend_for(impl), device=pure.get("device"), dtype=torch_dtype)
+    attention_plan = attn.plan(
+        num_qo_heads=num_qo_heads,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+        kv_indptr=pure.get("kv_indptr"),
+        kv_indices=pure.get("kv_indices"),
+        kv_last_page_len=pure.get("kv_last_page_len"),
+        qo_indptr=qo_indptr,
+        page_table=pure.get("page_table"),
+        mode="prefill",
+        page_size=pure.get("page_size"),
+        sm_scale=pure.get("sm_scale"),
+        kv_layout=str(pure.get("kv_layout", "NHD")),
+        causal=bool(pure.get("causal", True)),
+        block_q=int(pure.get("block_q", 128)),
+        k_cache=k_cache,
+        v_cache=v_cache,
+    )
+
+    def execute(q: torch.Tensor, out: Optional[torch.Tensor] = None) -> torch.Tensor:
+        return attn.run(q, k_cache, v_cache, plan=attention_plan, out=out)
+
+    return OpPlan(
+        op=PREFILL,
+        impl=impl.impl,
+        plan_kind=impl.plan_kind,
+        shape=(max(batch, 1), num_qo_heads, qo_len, head_dim),
+        dtypes=(dtype_name,),
+        kv_layouts=tuple(sorted(impl.kv_layouts)),
+        graph=impl.graph,
+        meta={
+            "num_qo_heads": num_qo_heads,
+            "num_kv_heads": num_kv_heads,
+            "head_dim": head_dim,
+            "qo_len": qo_len,
+            "mode": "prefill",
+            "causal": bool(pure.get("causal", True)),
+        },
+        state=attention_plan,
+        execute=execute,
+    )
+
+
+def run_prefill(p: OpPlan, q: torch.Tensor, **kw: Any) -> torch.Tensor:
+    return p(q, **kw)
+
+
+REGISTRY.op(PREFILL, doc="Prefill/append attention over a paged KV cache (causal by default).")
+REGISTRY.planner(PREFILL, plan_prefill)

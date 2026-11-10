@@ -1,0 +1,30 @@
+{
+  "op": "paged_prefill_attention",
+  "impl": "torch.reference",
+  "shape": {
+    "batch": 4,
+    "qo_len": 512,
+    "kv_len": 4096,
+    "h_q": 32,
+    "h_kv": 4,
+    "head_dim": 128,
+    "page_size": 128
+  },
+  "dtype": "bfloat16",
+  "device": "cpu",
+  "iters": 3,
+  "ms_median": 58.222,
+  "ms_min": 56.639,
+  "tokens_per_s": 35175.7,
+  "measured_ratio": 1.0,
+  "ratio_kind": "definitional parity (single prefill implementation; the benchmark floor)",
+  "out_shape": [
+    4,
+    32,
+    512,
+    128
+  ],
+  "command": "bench/bench_prefill_reference.py --batch 4 --qo-len 512 --kv-len 4096 --json bench/results/prefill_reference_b4_s4096.json",
+  "host": "tileinfer-102",
+  "date": "2026-11-10T21:10:04+08:00"
+}
