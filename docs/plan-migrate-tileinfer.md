@@ -125,33 +125,32 @@ legacy/              冻结的 vllm-ascend 时代补丁层                      
 等级按 TileInfer 自己的口径（`docs/status.md:47-57`）：**[核实]** 有落盘日志且可复现、**[待复核]** 单窗测量、
 **[作废]** 已被推翻。本仓只接受 [核实] 进默认。
 
-| 族 | 算子（本仓建议名） | 形态 | 设备 | 证据 | 现在状态 |
+| 族 | 算子（已注册名） | 形态 | 设备 | 证据 | 现在状态 |
 |---|---|---|---|---|---|
-| attn | `attn.paged_decode` | tilelang | 950 | decode bf16 vs fp32 oracle TOL 3e-2 [核实] | **在役默认** |
-| attn | `attn.paged_prefill` | tilelang + torch 打包 | 950 | 内核占比 1.000（`perf-candidates.md:27`）[核实] | **在役默认** |
-| attn | `attn.paged_decode_split` + `merge` | tilelang | 950 | "batch 1 上 3×"、带宽 51→153 GB/s [待复核] | opt-in（`TILEINFER_ALLOW_SPLIT_KV`） |
-| attn | `attn.paged_prefill_split` | tilelang | 950 | 无比值 | 未接线（只有测试） |
-| attn | `attn.simd_softmax` 变体 | tilelang | 950 | "~2.6× decode 形状" [待复核] | opt-in |
-| attn | `attn.page_pipeline` 变体 | tilelang | 950 | 实测回归（E296）[作废] | opt-in 且应删除 |
-| attn | `layout.kv_nz` pack/unpack | torch | 无 | 只有往返语义 | 未接线 |
-| gdn | `gdn.gating` | torch | 无 | vs fp64 oracle 1e-5；动机 2.6 ms/call | 死代码（公式在内核族的 torch 基线里活着） |
-| gdn | `gdn.conv_update` | tilelang | 950 | 内核 42.5× / **端到端 0.995** [核实] | opt-in 默认关 |
-| gdn | `gdn.chunk_wu` | tilelang | 950 | 内核本身无比值（只有 bench）；被取代的方法孤立 45.6×、整链 1.91×、端到端 1.04× [核实] | 仅 bench |
-| gdn | `gdn.chunk_{kkt,wy_fast,delta_h,chunk_o}` | torch | 无 | fp64 oracle TOL 3e-2 | 基线在 `ops/fla/**`（在役） |
-| gdn | `gdn.inproj_fusion` / `inproj_reorder` | torch（权重整形） | 无 | 逐位等价 [核实] | 死代码 |
-| moe | `moe.slot_layout` | torch | 无 | 结构性测试 | 未接线 |
-| moe | `moe.prenz_pack` | torch | 无 | 往返语义 | 被死内核依赖 |
-| moe | `moe.align_gate_up` / `align_down` | tilelang + c_api | 950 | 门槛 ≥1.0× 未达 | 未接线 |
-| moe | `moe.grouped_gemm` | tilelang | 950 | **0.86×** [核实，负结果] | 默认关，且应降级为归档 |
-| moe | `moe.down_prenz` | tilelang | 950 | **结果错（~1e36）** [核实，负结果] | 死代码 |
-| moe | `moe.shared_expert_fold` | torch（权重拼接 + 路由改列） | 无 | ~1.2 ms/step [待复核] | 在 legacy |
-| sampling | `sampling.topk_threshold` | **vendor_call**（`deep_select`） | NPU | 时间比 0.39/0.25/0.23（越低越快）[待复核] | 死代码 |
-| sampling | `sampling.fused_sample` | tilelang | 950 | 2.88 ms 恒定 vs sort 0.98→4.44 ms [待复核] | 死代码 |
-| sampling | `sampling.greedy` | torch | NPU | 无 | 在 legacy |
+| attn | `paged_decode_attention` | tilelang | 950 | 设备 fp32 oracle 对齐（ragged/尾页/乱序页表/d=128,256）[核实]；**vs 厂商 FIA 0.362×**（负）[核实] | **已迁，不默认**（`tilelang.decode950`） |
+| attn | `paged_prefill` | tilelang + torch 打包 | 950 | 源仓占比 1.000，本仓未复核 | **未迁**（950 后端对 prefill 抛 `NotImplementedError`） |
+| attn | `paged_decode_split` + `merge` | tilelang | 950 | "batch 1 上 3×" [待复核]；本仓扫形 25 min 未收敛，未采信 | opt-in（`TILEINFER_ALLOW_SPLIT_KV`），未评估 |
+| attn | `simd_softmax` / `page_pipeline` 变体 | tilelang | 950 | [待复核] / [作废] | 不迁（负与已知回归） |
+| layout | `kv_nz_layout` pack/unpack | torch | 无 | 只有往返语义 | 随内核迁入（`kernels/attention/kv_nz_layout.py`） |
+| gdn | `gdn_gating` | torch | 无 | vs fp64 oracle 1e-5 [核实] | **已迁，默认（基线，比值 1.0）** |
+| gdn | `gdn_conv_update` | tilelang | 950 | 本仓 **14.15×**（op 级）[核实]；源仓端到端 0.995 [核实] | **已迁，opt-in** |
+| gdn | `gdn_chunk_wu` | tilelang | 950 | 本仓 **14.55×**（vs 它取代的两个算子）[核实]；源仓孤立 45.6×、整链 1.91×、端到端 1.04× | **已迁，opt-in** |
+| gdn | 链上四算子（kkt / solve_tril / delta_h / chunk_o） | torch | 无 | fp64 oracle TOL 3e-2 | **已迁**（`ops/fla/`，5000 行纯 torch，零 triton/vllm 依赖） |
+| gdn | `inproj_fusion` / `inproj_reorder`（权重整形） | torch | 无 | 逐位等价 [核实] | 未迁（P2c） |
+| moe | `moe_slot_layout` | torch | 无 | 结构性测试 | 未迁（P3，待判决） |
+| moe | `moe_prenz_pack` / `moe_down_prenz` | torch / tilelang | 950 | 往返语义 / **结果错 ~1e36** [核实，负] | 归档，不迁 |
+| moe | `moe_grouped_gemm` | tilelang | 950 | **0.86×** [核实，负结果] | 归档，不迁 |
+| moe | `moe_shared_expert_fold` | torch（权重拼接 + 路由改列） | 无 | ~1.2 ms/step [待复核] | 未迁（需先补 A/B） |
+| sampling | `sampling_topk_threshold` | **vendor_call**（`deep_select`） | NPU | 时间比 0.39/0.25/0.23 [待复核] | 未迁（P4） |
+| sampling | `sampling_fused_sample` / `sampling_greedy` | tilelang / torch | 950/NPU | 2.88 ms 恒定 vs sort 0.98→4.44 ms [待复核] | 未迁（P4） |
 
-**读法**：本仓第一批只需要 4 个算子（`attn.paged_decode`、`attn.paged_prefill`、`gdn.conv_update`、
-`gdn.gating`）+ 2 个 oracle，就能同时覆盖 `torch` 形态与 `tilelang` 形态、覆盖"在役"与"opt-in"两种默认值。
-其余按 §5 排队。
+**读法**：第一批只需 4 个算子（`paged_decode_attention`、`gdn_conv_update`、`gdn_chunk_wu`、
+`gdn_gating`）就已经覆盖 `torch` 与 `tilelang` 两种形态、覆盖"默认"与"opt-in"两种默认值，并且
+**当场撞上了一个负结果**（decode 0.362×）——这不是意外，是这套判据本来就会给出的东西：
+源仓自己的 `docs/status.md` 写着 TPOT 2.53×、门是 1.10×。账本见 `docs/status.md`。
+
+**AscendC 形态**：用户已判定不在本次迁移范围内，本表不再预留行；`spec.FORMS` 里的
+`ascendc` 只是保留字符串，不是承诺。
 
 ### 2.4 必须反转的 5 类依赖
 
