@@ -74,6 +74,12 @@ op 级与端到端分开记；**端到端没过关的 op 不进默认**。
   - **设备闸**：`ImplSpec.device` 不属于 `{"any", 当前画像}` 直接拒绝（否则 CPU 机器会路由到只有 950
     才有的实现）；
   - **基线最后尝试**：候选按比值降序、torch 基线排最后，注册顺序不再决定性能选择。
+- `sampling_greedy` 也是本轮落地：`torch.argmax` 基线（定义性 1.0），是 `do_sample=False` 的分流目标；
+  分流只有一条规则 `sampler_for(do_sample)`，不把布尔塞进 `ShapeSpec`。
+- `sampling.fused_sample` **不迁**，理由与前置条件写进 `docs/archive-sampling.md`（零消费者、无端到端数字、
+  `vocab % 128` 约束、`ub_cap=8192` 触发 507035）。
+- 顺带修掉一个真 bug：`accepts_shape` 只在传了 `shape=` 时才查 dtype，于是 `plan(..., dtype="float32")`
+  会选中 bf16-only 的 vendor 实现，然后在 planner 里抛。现在 dtype 门与 shape 无关。
 - 并列语义记进 `docs/pitfalls.md`：bf16 词表 152k 必有碰撞，vendor 与 torch 可能选到**不同下标、
   相同数值**；用下标集合做判据会误报（第一次就是这么误报的）。
 - P3：MoE 三个 op（`slot_layout` 2.569×、`prenz` 负结果归档、`shared_fold`），先判决接不接。

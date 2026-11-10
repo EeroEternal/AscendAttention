@@ -256,6 +256,14 @@ class ImplSpec:
                 return False
         elif shape is not None and self.shape is None:
             return False
+        # The dtype gate must not depend on ``shape`` being passed: callers that describe a call with
+        # named dimensions (``plan(op, batch=..., vocab=..., dtype=...)``) never supply it, and skipping
+        # the check there silently routed float32 logits into a bf16-only vendor path.
+        allowed = self.shape.dtypes if self.shape is not None else frozenset()
+        if dtype is not None and allowed:
+            wanted = str(dtype).replace("torch.", "")
+            if wanted not in {str(d) for d in allowed}:
+                return False
         if kv_layout is not None and str(kv_layout) not in self.kv_layouts:
             return False
         if graph is True and self.graph != "capture_safe":

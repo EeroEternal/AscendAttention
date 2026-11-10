@@ -90,3 +90,72 @@ def test_module_level_helper_matches_the_plan():
     g = torch.Generator().manual_seed(3)
     logits = torch.randn(3, 32, generator=g)
     assert torch.equal(topk_threshold(logits, 4), _plan(batch=3, vocab=32, k=4)(logits))
+
+
+# ---------------------------------------------------------------------------------------------
+# The greedy sibling and the routing rule
+# ---------------------------------------------------------------------------------------------
+def test_greedy_returns_the_argmax_index_and_needs_no_mask():
+    from ascend_attention import plan, run
+
+    g = torch.Generator().manual_seed(7)
+    logits = torch.randn(6, 40, generator=g)
+    p = plan("sampling_greedy", batch=6, vocab=40, dtype="float32")
+    got = run(p, logits)
+    assert got.dtype == torch.int64
+    assert torch.equal(got, torch.argmax(logits, dim=-1))
+
+
+def test_greedy_ties_resolve_to_the_first_maximum():
+    logits = torch.tensor([[1.0, 5.0, 5.0, 0.0]])
+    from ascend_attention import plan, run
+
+    p = plan("sampling_greedy", batch=1, vocab=4, dtype="float32")
+    assert int(run(p, logits)[0]) == 1
+
+
+def test_router_sends_do_sample_to_the_threshold_and_greedy_elsewhere():
+    from ascend_attention.ops.sampling import GREEDY, OP, sampler_for
+
+    assert sampler_for(True) == OP
+    assert sampler_for(False) == GREEDY
+
+
+def test_convenience_sample_agrees_with_the_plans_it_selects():
+    from ascend_attention.ops.sampling import greedy, sample, topk_threshold
+
+    g = torch.Generator().manual_seed(8)
+    logits = torch.randn(4, 64, generator=g)
+    assert torch.equal(sample(logits, do_sample=False), greedy(logits))
+    assert torch.equal(sample(logits, k=5, do_sample=True), topk_threshold(logits, 5))
+    with pytest.raises(ValueError, match="needs k"):
+        sample(logits, do_sample=True)
+    with pytest.raises(ValueError, match=r"\[batch, vocab\]"):
+        sample(logits[0], do_sample=False)
+
+
+def test_both_samplers_are_declared_in_the_manifest():
+    from ascend_attention import capabilities
+
+    caps = capabilities()
+    names = {op["op"] for op in caps["ops"]}
+    assert {"sampling_topk_threshold", "sampling_greedy"} <= names
+
+
+def test_dtype_gate_applies_without_an_explicit_shape():
+    """A named-dimension query (no ``shape=``) must still reject a dtype the impl cannot take.
+
+    Regression: the vendor implementation is bf16-only, but the gate used to consult ``ShapeSpec`` only
+    when ``shape`` was supplied, so ``plan(..., dtype="float32")`` selected it and failed inside the
+    planner instead of falling back to torch.
+    """
+    from ascend_attention import plan
+
+    p = plan(
+        "sampling_topk_threshold",
+        batch=2,
+        vocab=32,
+        k=3,
+        dtype="float32",
+    )
+    assert p.impl == "torch.topk_threshold", p.impl

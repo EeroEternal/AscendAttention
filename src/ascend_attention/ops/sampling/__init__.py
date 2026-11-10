@@ -37,10 +37,12 @@ __all__ = [
 
 OP = "sampling_topk_threshold"
 
+_DTYPES = frozenset({"bfloat16", "float16", "float32"})
+
 _SHAPE = ShapeSpec(
     ndim=2,
     dims=(dim_min(1), dim_min(1)),
-    dtypes=frozenset({"bfloat16", "float16", "float32"}),
+    dtypes=_DTYPES,
     contiguous=True,
 )
 
@@ -160,3 +162,104 @@ def run_topk_threshold(p: OpPlan, logits):
 
 
 REGISTRY.planner(OP, plan_topk_threshold)
+
+
+# ---------------------------------------------------------------------------------------------
+# The greedy sibling, and the routing between the two.
+# ---------------------------------------------------------------------------------------------
+GREEDY = "sampling_greedy"
+
+GREEDY_TORCH = ImplSpec(
+    op=GREEDY,
+    impl="torch.argmax",
+    form="torch",
+    device="any",
+    shape=ShapeSpec(
+        ndim=2,
+        dims=(dim_min(1), dim_min(1)),
+        dtypes=_DTYPES,
+        contiguous=False,
+    ),
+    graph="capture_safe",
+    plan_kind="stateless",
+    enabled_by_default=True,
+    measured_ratio=1.0,
+    bench="bench/bench_sampling_greedy.py",
+    ratio_note=(
+        "definitional 1.0: the only implementation.  argmax is the semantics, not an optimisation, so "
+        "there is nothing to beat.  Ties resolve to the first maximum index, as torch does."
+    ),
+)
+
+
+def greedy(logits: torch.Tensor) -> torch.Tensor:
+    """Index of the maximum logit per row (greedy decoding); no host read, no allocation of a mask."""
+    return torch.argmax(logits, dim=-1)
+
+
+def plan_greedy(impl: ImplSpec, **pure: Any) -> OpPlan:
+    batch = int(pure["batch"])
+    vocab = int(pure["vocab"])
+    dtype = str(pure.get("dtype", "bfloat16"))
+    if batch < 1:
+        raise ValueError(f"{GREEDY}/{impl.impl}: batch must be >= 1, got {batch}")
+    if vocab < 1:
+        raise ValueError(f"{GREEDY}/{impl.impl}: vocab must be >= 1, got {vocab}")
+    if dtype not in _DTYPES:
+        raise ValueError(f"{GREEDY}/{impl.impl}: dtype {dtype!r} is outside {sorted(_DTYPES)}")
+
+    def execute(logits):
+        if logits.dim() != 2 or tuple(logits.shape) != (batch, vocab):
+            raise ValueError(
+                f"{GREEDY}/{impl.impl}: logits must be {(batch, vocab)}, got {tuple(logits.shape)}"
+            )
+        return greedy(logits)
+
+    return OpPlan(
+        op=GREEDY,
+        impl=impl.impl,
+        plan_kind="stateless",
+        shape=(batch, vocab),
+        dtypes=(dtype,),
+        kv_layouts=tuple(sorted(impl.kv_layouts)),
+        graph=impl.graph,
+        meta={"select": "argmax"},
+        execute=execute,
+    )
+
+
+REGISTRY.op(GREEDY, doc="Greedy sampling: the per-row argmax index (do_sample=False).")
+REGISTRY.register(GREEDY_TORCH)
+REGISTRY.planner(GREEDY, plan_greedy)
+
+
+def sampler_for(do_sample: bool) -> str:
+    """Which operator serves a request: the only routing rule the sampling family has.
+
+    ``do_sample=False`` is greedy decoding — a different *function*, not a variant of the threshold, so
+    it is a different op and not an ``ImplSpec`` flag.  Keeping them apart is what lets each one carry
+    its own declaration (greedy is capture-safe and allocation-free in spirit; the threshold allocates
+    a mask) and its own ratio.
+    """
+    return OP if do_sample else GREEDY
+
+
+def sample(logits: torch.Tensor, k: Optional[int] = None, do_sample: bool = True):
+    """Plan and run the right sampler for one ``[batch, vocab]`` logits tensor.
+
+    A convenience for callers that only have logits: dispatch stays cheap because both planners are pure
+    data, and the caller keeps the right to ``plan()`` once and reuse the ``OpPlan``.
+    """
+    # Imported here, not at module level: the package's ``__init__`` imports this module to trigger
+    # registration, so a top-level ``from ... import plan`` would be a cycle.
+    from ... import plan, run
+
+    if logits.dim() != 2:
+        raise ValueError(f"logits must be [batch, vocab], got {tuple(logits.shape)}")
+    batch, vocab = int(logits.shape[0]), int(logits.shape[1])
+    dtype = str(logits.dtype).replace("torch.", "")
+    if not do_sample:
+        return run(plan(GREEDY, batch=batch, vocab=vocab, dtype=dtype), logits)
+    if k is None:
+        raise ValueError("do_sample=True needs k (the threshold top-k)")
+    return run(plan(OP, batch=batch, vocab=vocab, k=k, dtype=dtype), logits)
