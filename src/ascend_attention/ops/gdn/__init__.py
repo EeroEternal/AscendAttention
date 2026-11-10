@@ -240,6 +240,9 @@ def plan_conv(impl: ImplSpec, **pure: Any) -> OpPlan:
         from ..fla.causal_conv1d import causal_conv1d_update
 
         def execute(x, state, weight, bias, line: int, out=None):
+            # ``null_block_id=None`` is deliberate: the upstream default is 0, and a row equal to it is
+            # skipped silently (no output, no state change) - at this layer ``line`` is just a row
+            # index, so treating 0 as "no cache page" would turn a legal call into zeros.
             out = causal_conv1d_update(
                 x.reshape(1, -1),
                 state,
@@ -247,6 +250,7 @@ def plan_conv(impl: ImplSpec, **pure: Any) -> OpPlan:
                 bias,
                 "silu",
                 conv_state_indices=torch.tensor([line], dtype=torch.int32, device=state.device),
+                null_block_id=None,
             ).reshape(-1)
             return out if out is None else out
 

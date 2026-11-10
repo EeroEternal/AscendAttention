@@ -66,6 +66,29 @@ def test_conv_kernel_matches_torch_on_output_and_state():
     assert state_err <= 2e-2 * max(scale, 1e-3), f"state max_abs={state_err:.3e}"
 
 
+def test_conv_kernel_handles_row_zero():
+    """Row 0 is a legal row here, and it is also upstream's ``NULL_BLOCK_ID``.
+
+    ``causal_conv1d_update`` skips the row equal to ``null_block_id`` (default 0) without writing or
+    returning anything, so a baseline that forwards the default turns ``line=0`` into a silent zero
+    output.  Our planner passes ``null_block_id=None``; this test pins both sides to real numbers.
+    """
+    pytest.importorskip("tilelang")
+    p_kernel, p_torch = _plans()
+    x, state0, weight, bias = _inputs()
+
+    state_k, state_t = state0.clone(), state0.clone()
+    out_k = p_kernel(x, state_k, weight, bias, 0)
+    out_t = p_torch(x, state_t, weight, bias, 0)
+    torch.npu.synchronize()
+
+    assert float(out_t.float().abs().max()) > 0, "baseline returned zeros for row 0"
+    scale = float(out_t.float().abs().max()) or 1.0
+    assert float((out_k.float() - out_t.float()).abs().max()) <= 2e-2 * scale
+    assert torch.equal(state_k[0, :, -1], x.to(DT))
+    assert torch.equal(state_t[0, :, -1], x.to(DT))
+
+
 def test_conv_kernel_rejects_width_other_than_4():
     from ascend_attention import plan
 

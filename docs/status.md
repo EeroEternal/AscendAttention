@@ -43,10 +43,21 @@ op 级与端到端分开记；**端到端没过关的 op 不进默认**。
 **torch 基线**条目（`gdn_gating`、`gdn_conv_update`，比值 1.0），含义是「本仓有这个 op，但
 没有可用的加速实现，用它与厂商路径持平」——不是性能声明。两个内核都因为「不默认」而不出现。
 
+## P2c（权重整形 + 基线自身取证）
+
+- `ops/gdn/weights.py`：`fuse_inproj_weight` / `split_interleaved` / `reorder_rows_plan` /
+  `apply_row_order` 四个纯函数。两种独立推导（循环 vs reshape）在 6 组头配置上逐位一致，
+  GEMM 列置换 `torch.equal` 成立（**位级**等价，不是近似）。
+- `tests/test_fla_ops.py`：`ops/fla` 的 6 个基线算子对 fp64/oracle 取证——conv（decode + prefill 两种
+  形态，含状态写入）、`l2norm`、`chunk_local_cumsum`、`kkt`（对定义式）、`solve_tril`（对
+  `torch.linalg.inv`）、`wu`（对 fp64 matmul），以及 strictly-lower 守卫。
+- 顺手挖到一个**会静默出零**的坑：上游 `null_block_id` 默认 0，第 0 行被整段跳过。已修 planner 并加
+  测试，记入 `docs/pitfalls.md` 第 1 条。
+
 ## 下一批
 
-- P2b 已完成：`gdn_chunk_wu` 设备数值（含尾块 96/32）+ A/B 14.55×，仍为 opt-in。
-- P2c：权重整形纯函数、`fla` 链的 CPU 数值契约（fp64 oracle）、`gdn_gating` 与 `fla.gating` 去重。
+- P3：MoE。先判决 `slot_layout` 是否值得接；`prenz` / `0.86× grouped_gemm` / 结果错的 `down_prenz`
+  只归档；`shared_expert_fold` 需先补 A/B。
 - P3：MoE 三个 op（`slot_layout` 2.569×、`prenz` 负结果归档、`shared_fold`），先判决接不接。
 - P4：采样（`vendor_call` 形态）。
 - P5：端到端账本 + TileInfer 反向接入等价证明 + 图捕获守卫审计。

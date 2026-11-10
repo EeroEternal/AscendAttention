@@ -106,7 +106,7 @@ def _forward(
 ) -> torch.Tensor:
     if cu_seqlens is None:
         return _chunk_forward(g, chunk_size, reverse)
-    from .fla.hostcache import int_list  # noqa: PLC0415 - cached batch-meta reads
+    from ..fla.hostcache import int_list  # noqa: PLC0415 - cached batch-meta reads
 
     bounds = int_list(cu_seqlens)
     if len(bounds) < 2 or bounds[0] != 0 or bounds[-1] != g.shape[0]:
