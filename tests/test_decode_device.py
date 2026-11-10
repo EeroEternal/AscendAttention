@@ -141,3 +141,30 @@ def test_decode_head_dim_256_matches_oracle():
     expected = _oracle(q, k_cache, v_cache, meta, indptr, last_page_len, page_size, batch)
     err = (out.cpu().float() - expected).abs().max().item()
     assert err < TOL, f"max abs error {err:.4f} >= {TOL}"
+
+
+@pytest.mark.parametrize("group", [3, 40])
+def test_gqa_group_beyond_the_row_tile_is_masked(group):
+    """``padded_rows`` rounds the M tile up to 32, so a non-multiple group leaves dummy rows behind.
+
+    Those rows must never contribute to a real row's softmax.  ``group=3`` exercises 29 dummy rows and
+    ``group=40`` crosses the 32-row boundary (24 dummy rows in the second tile) - the two sides of the
+    rounding, which is where a mask written against the *logical* group rather than the *padded* extent
+    would still look correct for the shapes the other tests cover.
+    """
+    from ascend_attention.kernels.attention.paged_decode_ascend950 import padded_rows
+
+    assert padded_rows(group) > group, "this case is only meaningful when padding happens"
+    batch, kv_heads, page_size, dim = 2, 1, 64, 128
+    q, k_cache, v_cache, meta, indptr, last = _build(
+        batch, kv_heads, group, page_size, dim, [200, 65], seed=group
+    )
+    plan_ = _decode_plan(q, k_cache, v_cache, meta, batch, kv_heads, group, dim, page_size)
+    from ascend_attention import run
+
+    out = run(plan_, q)
+    torch.npu.synchronize()
+    expected = _oracle(q, k_cache, v_cache, meta, indptr, last, page_size, batch)
+    diff = (out.cpu().float() - expected).abs().max().item()
+    assert diff < TOL, f"group={group}: max abs diff {diff:.3e} exceeds {TOL}"
+    assert torch.isfinite(out).all()

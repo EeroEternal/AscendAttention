@@ -11,10 +11,10 @@
 | D2 | per-op plan | ✅ | `plan()` 一次只产出一个 `OpPlan`；无 per-stage 聚合 |
 | D3 | 状态由 caller 传入 | ✅ | `k_cache`/`v_cache` 由调用方持有并被 plan 捕获；库内无 `self._state` |
 | D4 | 布局=枚举集 + `needs_pack` | ✅ | `kv_layouts`（ND/NZ）+ `layout_notes`；NZ 声明"可 pack，内核不直吃" |
-| D5 | `graph` 三档 | ✅ | `spec.GRAPHS`；两档由 `capture_guard` 机械验证（`tests/test_capture_guard.py`） |
+| D5 | `graph` 三档 | ✅ | `spec.GRAPHS`；三档各有实证：`capture_safe` = decode 内核（guard 0 回读 + `NPUGraph` capture/replay 逐位相同），`eager_only` = conv 基线（guard 抓到 `_to_copy` 回读），`unknown` = 910B fork（不宣称） |
 | D6 | 只给源码 + `prewarm()` 纯函数 | ✅ | `ascend_attention.prewarm()`（本轮新增，去重排序、不编译）；无预编译产物 |
 | D7 | 只允许 `ASCEND_ATTN_*` | ✅（前缀统一 + 单一入口） | 内核里现已**零** `os.environ`：7 处读取全部走 `utils.kernel_flag()`（唯一入口、只读 `ASCEND_ATTN_*`、首次使用打一条 warning），flag 名字由 AST ratchet 钉死。**仍待办**：把它们变成显式编译规格参数（`docs/completion-audit.md` 的缺口 6） |
-| D8 | 负结果归档 | ✅ | `docs/archive-moe.md`、`docs/archive-sampling.md`、`docs/status.md` 的负结果条目 |
+| D8 | 负结果归档 | ✅ | `docs/archive-moe.md`、`docs/archive-sampling.md`、`docs/archive-attention.md`、`docs/status.md` |
 
 ## P0 验收
 
@@ -24,7 +24,7 @@
 | `manifest()` 可 json.dumps，`supports()` 无需张量 | ✅ | `tests/test_manifest.py`、`tests/test_spec.py` |
 | `plan/run` 在 reference 上跑通 decode 与 prefill 全分支 + fp64 oracle（尾页 poison 1e4） | ✅ | `tests/test_decode_fp64.py`（**独立 fp64 定义式**，不共用实现里的页展开代码，1e-6 + 反例）、`tests/test_attention_api.py`（decode 对 reference）、`tests/test_prefill_api.py`（prefill/append + fp64 oracle）、`tests/test_acceptance_mechanisms.py::test_partial_last_page_padding_does_not_change_the_result`（1e4 poison 逐位不变） |
 | `capture_guard()` 抓得住 `torch.empty` | ✅ 本轮补齐 | `tests/test_capture_guard.py`（8 项，含 device 侧 `eager_only` 实证） |
-| 零 `import vllm`；单文件与整套都绿 | ✅ | 344 tests；`test_import_hygiene` 走 AST 全包扫描 |
+| 零 `import vllm`；单文件与整套都绿 | ✅ | 358 tests；`test_import_hygiene` 走 AST 全包扫描 |
 
 ## P1 验收
 
@@ -80,7 +80,7 @@
 | 尾页 padding 未 mask | 1e4 poison + 逐位比较 | ✅ 本轮 |
 | OOB gather 返回垃圾 | `RaggedMetadata.validate()` 在 plan 期校验 | ✅ 既有 |
 | 子 32 字节描述符 507035 | `ShapeSpec` 的 `min_group`/`min_stride_bytes` | ❌ **未实现，且试过一版是错的**：先按"张量最内层 stride 字节数"实现，跑既有 decode 测试立刻发现 bf16 池的最内层 stride 本来就是 1 元素 = 2 B，等于把所有合法输入全拒了。这条坑的真实含义是**单次 GM→UB 搬运的连续字节数** < 32 B，不是张量 stride；已回退，不留下一个看着像机制的错门 |
-| AIV 行号不可见 → causal 阈值错 | host 预算阈值 + 上下半区测试 | ⚠️ 内核里按元素算，未做专门契约测试 |
+| AIV 行号不可见 → causal 阈值错 | `padded_rows` 的虚行必须被掩盖 + 两侧实测 | ✅ 本轮：`tests/test_decode_device.py::test_gqa_group_beyond_the_row_tile_is_masked[3/40]`（29 个虚行 / 跨 32 边界 24 个虚行，均对 fp32 oracle <3e-2） |
 | 三处 bf16 截断 | 契约测试断言 dtype | ✅ 本轮 |
 | 两个三角 | 两条契约测试（对角掩码） | ✅ 本轮 |
 | 编译占 GIL | `prewarm()` 纯函数 | ✅ 本轮 |
@@ -90,16 +90,24 @@
 | 元数据 dtype 跨实现不一致 | ABI 把 dtype 写成数据 | ⚠️ 部分（int32 统一，fork 变体未并测） |
 | `__future__` 破坏 TileLang | AST ratchet（本轮真修了 2 个文件） | ✅ 本轮 |
 | 内核读 env | `utils.kernel_flag()` 单一入口 + AST ratchet（禁止直接 `os.environ`、flag 名钉死） | ✅ 本轮（未参数化，见缺口 6） |
-| 测试顺序污染 | 禁止全局 fixture；整套 + 逐文件双跑 | ✅ 344 项 |
+| 测试顺序污染 | 禁止全局 fixture；整套 + 逐文件双跑 | ✅ 358 项 |
 | 许可证/出处 | `NOTICE` + 每个 impl 的 `provenance` | ✅ |
 
 ## 还没做的（明确清单）
 
-1. **prefill 内核**：只有 reference 语义，没有 TileLang prefill。
-2. **split-KV**：需要 `TILEINFER_ALLOW_SPLIT_KV=1` 且编译 25 分钟未收敛，没有证据，不宣称。
-4. **507035 的"连续搬运 <32 B"约束**：还没有机制（试错的版本已回退，见上表）。
-6. **`vllm_adapter`**：与零依赖规则冲突，未做。
-7. **head_dim=256 且 K/V 非对称**、**NZ 直吃内核**、**NHD 以外的布局**：契约里声明为不支持。
-8. **内核 flag 还没变成编译规格参数**：现在是"单一入口 + 统一前缀 + ratchet"，不再是七个散落的
-   `os.environ`，但仍然读进程状态。下一步是把 7 个 flag 提成 `build_*` 的显式参数（会动内核签名与
-   `spec_key`，需要设备复测）。
+按"要么给证据，要么写没做"的规矩，这七条没有证据，所以不写成完成：
+
+1. **prefill 的编排**：内核（`paged_prefill_ascend950` + split/head/frontier 三个变体）在仓里，
+   但 prefill 一步的 tile 数取决于 batch，`plan()` 的 per-shape 模型表达不了，所以只迁了语义
+   （reference + fp64 oracle）并把它声明成 `enabled=False` 的未接线实现。见 `archive-attention.md`。
+2. **split-KV**：TileInfer 记 3×，但两次把设备卡死（`ACL_ERROR_RT_VECTOR_CORE_EXCEPTION`），
+   本批 25 分钟编译扫描未收敛。连候选都不注册，理由在 `archive-attention.md` §3。
+3. **507035 的"单次搬运 <32 B"约束**：还没有机制。试过的一版按"张量最内层 stride"实现，被既有测试
+   当场证伪并回退，见 §7 表。
+4. **`vllm_adapter`**：与"全仓零 vllm 依赖"冲突，且需要 vLLM 的 ABI 名；只能放 `integrations/` 才安全，
+   本轮选择不做并记录（P5 行）。
+5. **head_dim=256 且 K/V 非对称**、**NZ 直吃内核**、**NHD 以外的布局**：契约里声明不支持，不是遗漏。
+6. **7 个内核 flag 还没变成编译规格参数**：已是"单一入口 `utils.kernel_flag` + 统一前缀 + ratchet"，
+   但仍在读进程状态。其中 5 个在 plan/build 期读（值已进编译键），真正在 trace 期读的是
+   `SIMD_SOFTMAX` 与 `PREFILL_NOSCAN_OFF` 两个——参数化要动内核签名与 `spec_key`，需设备复测。
+7. **服务级 TPOT A/B**：要起引擎，属于平台语义（`docs/reverse-integration.md` §6 的口径）。
