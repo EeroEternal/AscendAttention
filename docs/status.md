@@ -17,7 +17,7 @@ CANN 9.3（`ASCEND_HOME` 指向 TileInfer 的 `.work/cann930`），缓存复用 
 | `gdn_chunk_wu` | `torch.solve_tril_recompute_wu` | torch 组合 | 是（基线） | 1.0 | [核实] |
 | `gdn_chunk_wu` | `tilelang.chunk_wu950` | TileLang 内核 | **否** | **14.55**（vs 链中 2 个算子） | [核实] 设备实测；输出相对误差 1.3e-3 |
 | `paged_prefill_attention` | `torch.reference` | torch oracle（`attention`） | 是 | 1.0（基线定义） | [核实] 独立 fp64 定义式（页号展开到 token 槽） |
-| `paged_prefill_attention` | `tilelang.prefill950` | TileLang 内核 | **否** | — | **未接线**：内核在仓（`paged_prefill_ascend950`），编排是 tile-count 驱动、非 plan-backed；`plan()` 显式 `NotImplementedError` |
+| `paged_prefill_attention` | `tilelang.prefill950` | TileLang 内核（`forward_prefill`） | **否** | — | **步级 plan**：schedule 用本仓 `plan_query_tiles_from_host` 由 `qo_lens*group` 行数生成，一个 plan 对应一步；[核实] 上卡与 `torch.reference` 一致（含 append 的 `causal_shift`），无厂商 A/B 故不给比值 |
 | `moe_slot_layout` | `torch.slot_layout` | torch 组合 | 是 | 1.0（定义性） | [核实] 与 `testing/moe_reference` 的循环写法逐项一致 |
 | `moe_prenz_pack` | `torch.prenz_pack` | torch 组合 | 是 | 1.0（定义性） | [核实] pack→unpack 逐位复原 |
 | `moe_topk_softmax` | `torch.topk_softmax` | torch 组合 | 是（基线） | 1.0（定义性） | [核实] fp64 逐 token 对拍 + 并列按最小 id |
@@ -118,7 +118,7 @@ python -m ascend_attention --capabilities  # 清册（含默认关的实现与�
 | 批 | 内容 | 状态 |
 |---|---|---|
 | P0 | 骨架 + 三入口 + fp64 oracle + `capture_guard` | ✅ |
-| P1 | attention：decode（设备对数、真图捕获）、prefill 语义、布局声明 | ✅（prefill 编排按边界不迁，见 `archive-attention.md`） |
+| P1 | attention：decode（设备对数、真图捕获）、prefill 语义 **+ 内核接线（步级 plan）**、布局声明 | ✅（内核已接线；跨步复用与厂商 A/B 仍缺，见 `README`「明确未实现」） |
 | P2 | GDN 全链 + 四个"静默杀手"契约 | ✅ |
 | P3 | MoE：两个基线 + 四样归档 | ✅ |
 | P4 | 采样：vendor_call（唯一正收益）+ greedy + 分流规则 | ✅（`fused_sample` 归档） |

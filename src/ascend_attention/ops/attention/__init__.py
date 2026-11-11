@@ -234,11 +234,16 @@ PREFILL_REFERENCE = ImplSpec(
     ),
 )
 
-#: The prefill *kernel* is in this repo but not wired: its orchestration (tile counts, split/merge,
-#: frontier bookkeeping) is tile-count-driven rather than plan-backed, which is the one thing this
-#: library refuses to absorb.  Declared so the inventory tells the truth instead of implying the kernel
-#: does not exist.
-PREFILL_KERNEL_UNWIRED = ImplSpec(
+#: The prefill **kernel**, wired as a *per-step* plan.
+#:
+#: The honest statement of what a prefill plan is: the tile count is ``sum_b ceil(qo_len_b * group /
+#: block_q)``, i.e. a function of this step's prompt lengths, so one plan describes exactly one step.
+#: That is not a defect of this library - it is what "plan captures a fixed shape" means - and it is why
+#: the flag is off by default: a caller has to know it must re-plan each step, and the platform's prefill
+#: path already builds its schedule per step.  The alternative (pretending a plan is reusable across
+#: prompt lengths) is a plan that silently truncates a longer prompt, which is the failure mode worth
+#: avoiding.
+PREFILL_KERNEL = ImplSpec(
     op=PREFILL,
     impl="tilelang.prefill950",
     form="tilelang",
@@ -250,25 +255,158 @@ PREFILL_KERNEL_UNWIRED = ImplSpec(
         contiguous=True,
     ),
     kv_layouts=frozenset({"ND"}),
+    # A capture would freeze one step's query lengths, which is only sound because the plan is per step
+    # anyway; declaring it eager_only keeps the requirement visible instead of relying on that reasoning.
     graph="eager_only",
     plan_kind="attention",
     enabled_by_default=False,
     measured_ratio=None,
     bench=None,
-    ratio_note="not wired, so not measured: there is no path to benchmark yet",
+    ratio_note=(
+        "not measured: no op-level A/B against a vendor prefill exists, so there is no ratio to claim - "
+        "and a definitional 1.0 would be a lie here because this is not the only prefill path"
+    ),
     requires=frozenset({"tilelang", "torch_npu"}),
     provenance=(
-        "tileinfer/kernels/attention/paged_decode_ascend950.py:paged_prefill_ascend950 (+split/head/"
-        "frontier variants) and tileinfer/attention/prefill.py (orchestration, not migrated)"
+        "tileinfer/kernels/attention/paged_decode_ascend950.py:paged_prefill_ascend950 + forward_prefill "
+        "(pack/unpack, RowThr causal thresholds); the schedule comes from this repo's plan_query_tiles"
     ),
     note=(
-        "kernel present in-tree, orchestration deliberately not migrated: a prefill step's tile count "
-        "depends on the batch, which a per-shape plan cannot express (backends/tilelang_ascend950.py:89-95)"
+        "ONE PLAN IS ONE PREFILL STEP: the schedule is the step's tile count, so a plan is not reusable "
+        "across prompt lengths (a longer prompt would need more tiles than the compiled variant has). "
+        "Off by default for that reason and because no vendor A/B was measured. Use qo_lens (or "
+        "qo_indptr) that match the step you are about to run."
     ),
 )
 
 REGISTRY.register(PREFILL_REFERENCE)
-REGISTRY.register(PREFILL_KERNEL_UNWIRED)
+REGISTRY.register(PREFILL_KERNEL)
+
+
+def _plan_prefill_kernel(impl: ImplSpec, pure: dict, *, batch: int, qo_len: int) -> OpPlan:
+    """Wire the in-tree prefill kernel to **this step's** schedule.
+
+    Split out of :func:`plan_prefill` because it is the branch with the interesting contract, and the
+    contract is short: the schedule (and therefore the compiled variant's ``num_tiles``) is built from
+    the query lengths you pass, so the plan describes one step.  Everything the run needs afterwards is
+    captured here - metadata, schedule, query-length tensor - so the run itself does no planning and no
+    host round trip; :func:`~ascend_attention.kernels.attention.paged_decode_ascend950.forward_prefill`
+    is index-driven on the device side.
+    """
+    qo_lens = pure.get("qo_lens")
+    qo_indptr = pure.get("qo_indptr")
+    if qo_lens is None and qo_indptr is None:
+        raise ValueError(
+            f"{PREFILL}/{impl.impl}: the kernel needs qo_lens (per-request query lengths) or qo_indptr; "
+            "without them there is no tile count, and guessing one would truncate the prompt"
+        )
+    k_cache = pure.get("k_cache")
+    v_cache = pure.get("v_cache")
+    kv_indptr = pure.get("kv_indptr")
+    kv_indices = pure.get("kv_indices")
+    kv_last_page_len = pure.get("kv_last_page_len")
+    for name, value in (
+        ("k_cache", k_cache),
+        ("v_cache", v_cache),
+        ("kv_indptr", kv_indptr),
+        ("kv_indices", kv_indices),
+        ("kv_last_page_len", kv_last_page_len),
+    ):
+        if value is None:
+            raise ValueError(f"{PREFILL}/{impl.impl}: the kernel needs {name}")
+
+    from ...kernels.attention.paged_decode_ascend950 import forward_prefill
+    from ...metadata import RaggedMetadata
+    from ...plan import plan_query_tiles_from_host
+
+    num_qo_heads = int(pure["num_qo_heads"])
+    num_kv_heads = int(pure["num_kv_heads"])
+    head_dim = int(pure["head_dim"])
+    page_size = int(k_cache.shape[1])
+    if num_qo_heads % num_kv_heads:
+        raise ValueError(
+            f"{PREFILL}/{impl.impl}: num_qo_heads={num_qo_heads} is not a multiple of "
+            f"num_kv_heads={num_kv_heads}"
+        )
+    group = num_qo_heads // num_kv_heads
+
+    if qo_lens is None:
+        qo_lens = qo_indptr[1:] - qo_indptr[:-1]
+    qo_lens = torch.as_tensor(qo_lens, dtype=torch.int32, device=k_cache.device).reshape(-1)
+    if int(qo_lens.numel()) != batch:
+        raise ValueError(
+            f"{PREFILL}/{impl.impl}: qo_lens has {int(qo_lens.numel())} entries but the batch is {batch}"
+        )
+    lengths = [int(x) for x in qo_lens.to(torch.int64).cpu().tolist()]
+    if max(lengths) != qo_len:
+        raise ValueError(
+            f"{PREFILL}/{impl.impl}: qo_lens max is {max(lengths)} but qo_len was computed as {qo_len}"
+        )
+    page_counts = [int(x) for x in (kv_indptr[1:] - kv_indptr[:-1]).to(torch.int64).cpu().tolist()]
+    block_q = int(pure.get("block_q", 128))
+    # The schedule is over **flattened (q_pos, group) rows**, not over query positions: an M tile holds
+    # ``block_q`` rows in that order (see forward_prefill's docstring). Planning with ``qo_lens`` alone
+    # would leave the second half of every tile dead - half the output zeros - so the row counts are
+    # multiplied by ``group`` here, at the one place that knows the factor.
+    schedule = plan_query_tiles_from_host(
+        [length * group for length in lengths],
+        page_counts,
+        device=k_cache.device,
+        block_q=block_q,
+        load_balance=True,
+    )
+    meta = RaggedMetadata(
+        kv_indptr=kv_indptr,
+        kv_indices=kv_indices,
+        kv_last_page_len=kv_last_page_len,
+        page_size=page_size,
+        qo_indptr=pure.get("qo_indptr"),
+    )
+    pv_single_pass = bool(pure.get("pv_single_pass", False))
+
+    def execute(q: torch.Tensor, out: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if tuple(q.shape) != (batch, num_qo_heads, qo_len, head_dim):
+            raise ValueError(
+                f"{PREFILL}/{impl.impl}: q must be {(batch, num_qo_heads, qo_len, head_dim)}, got "
+                f"{tuple(q.shape)}"
+            )
+        return forward_prefill(
+            q,
+            k_cache,
+            v_cache,
+            meta,
+            schedule,
+            qo_lens,
+            group=group,
+            block_q=block_q,
+            out=out,
+            pv_single_pass=pv_single_pass,
+        )
+
+    return OpPlan(
+        op=PREFILL,
+        impl=impl.impl,
+        plan_kind=impl.plan_kind,
+        shape=(batch, num_qo_heads, qo_len, head_dim),
+        dtypes=(str(pure.get("dtype") or k_cache.dtype).rsplit(".", 1)[-1],),
+        kv_layouts=tuple(sorted(impl.kv_layouts)),
+        graph=impl.graph,
+        meta={
+            "num_qo_heads": num_qo_heads,
+            "num_kv_heads": num_kv_heads,
+            "head_dim": head_dim,
+            "page_size": page_size,
+            "qo_len": qo_len,
+            "qo_lens": tuple(lengths),
+            "rows_per_request": tuple(length * group for length in lengths),
+            "num_tiles": int(schedule.num_tiles),
+            "block_q": block_q,
+            "mode": "prefill",
+            "kernel": True,
+        },
+        state={"schedule": schedule, "meta": meta, "qo_lens": qo_lens},
+        execute=execute,
+    )
 
 
 def plan_prefill(impl: ImplSpec, **pure: Any) -> OpPlan:
@@ -281,7 +419,14 @@ def plan_prefill(impl: ImplSpec, **pure: Any) -> OpPlan:
     num_kv_heads = int(pure["num_kv_heads"])
     head_dim = int(pure["head_dim"])
     qo_indptr = pure.get("qo_indptr")
-    if qo_indptr is not None:
+    qo_lens = pure.get("qo_lens")
+    if qo_lens is not None:
+        # The kernel needs per-request lengths anyway, so they are also the best source of the batch
+        # size: requiring a separate ``batch`` argument invites the two disagreeing.
+        lengths = torch.as_tensor(qo_lens).reshape(-1)
+        batch = int(lengths.numel())
+        qo_len = int(pure.get("qo_len") or int(lengths.max()))
+    elif qo_indptr is not None:
         batch = int(qo_indptr.numel()) - 1
         qo_len = int(qo_indptr[1:].sub(qo_indptr[:-1]).max())
     elif pure.get("qo_len") is not None:
@@ -302,11 +447,7 @@ def plan_prefill(impl: ImplSpec, **pure: Any) -> OpPlan:
         )
 
     if impl.form == "tilelang":
-        raise NotImplementedError(
-            f"paged_prefill_attention/{impl.impl}: the prefill kernel is in-tree but its orchestration is "
-            "tile-count-driven and not plan-backed (see ImplSpec.note); use impl='torch.reference' or "
-            "drive the kernel from the platform's prefill path"
-        )
+        return _plan_prefill_kernel(impl, pure, batch=batch, qo_len=qo_len)
 
     from ...api import BatchAttention
 
@@ -318,6 +459,18 @@ def plan_prefill(impl: ImplSpec, **pure: Any) -> OpPlan:
     if torch_dtype is None:
         raise ValueError(f"paged_prefill_attention: unsupported dtype {dtype_name!r}")
     attn = BatchAttention(backend=_backend_for(impl), device=pure.get("device"), dtype=torch_dtype)
+    # ``BatchAttention.plan`` takes the query lengths only as ``qo_indptr``. A caller that gave us
+    # uniform ``qo_len`` (or per-request ``qo_lens``) has the same information, so derive the indptr
+    # here: passing None through would leave the reference backend with no query lengths at all and it
+    # would return a partially written tensor - zeros for the rows it never scheduled - which reads as
+    # "attention output" rather than as a bug.
+    if qo_indptr is None:
+        if qo_lens is not None:
+            lengths_dev = torch.as_tensor(qo_lens).reshape(-1).to(torch.int64)
+        else:
+            lengths_dev = torch.full((max(batch, 1),), qo_len, dtype=torch.int64)
+        qo_indptr = torch.zeros(lengths_dev.numel() + 1, dtype=torch.int32)
+        qo_indptr[1:] = torch.cumsum(lengths_dev, 0).to(torch.int32)
     attention_plan = attn.plan(
         num_qo_heads=num_qo_heads,
         num_kv_heads=num_kv_heads,

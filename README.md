@@ -41,7 +41,7 @@ pip install -e ".[dev]"                               # 加 pytest
 ## 仓库功能
 
 - **注意力**：paged decode（GQA、head_dim 128/256、NHD 池、分页表）、paged prefill（reference 语义 + fp64 oracle；
-  prefill 内核在仓，tile-count 编排属平台侧，未接线）、**MLA decode**（压缩 latent + 解耦 RoPE 的分页缓存，
+  prefill 内核在仓，按**单步 plan**接线：schedule 就是这一步的 tile 数，故默认关）、**MLA decode**（压缩 latent + 解耦 RoPE 的分页缓存，
   reference 语义 + fp64 定义式取证）
 - **线性注意力（GDN）**：卷积更新、门控、分块递推 chunk 链、权重整形
 - **MoE**：路由 top-k（`moe_topk_softmax`）、块对齐（`moe_align_block_size`）、SwiGLU
@@ -61,7 +61,7 @@ pip install -e ".[dev]"                               # 加 pytest
 | op | 语义名（平台绑定用） | 实现 | 默认 |
 |---|---|---|---|
 | `paged_decode_attention` | `attention.paged_decode` | `torch.reference`（oracle）、`tilelang.decode950`（上卡验证 + 真图捕获） | 否（内核无 op 级 A/B） |
-| `paged_prefill_attention` | `attention.paged_prefill` | `torch.reference`、`tilelang.prefill950`（内核在仓、未接线） | reference 是 |
+| `paged_prefill_attention` | `attention.paged_prefill` | `torch.reference`、`tilelang.prefill950`（内核在仓，**步级 plan**：一个 plan 就是一步，跨 prompt 长度须重规划） | reference 是 |
 | `gdn_gating` | `gdn.gating` | `torch.gating` | 是（基线） |
 | `gdn_conv_update` | `gdn.conv_update` | `torch.causal_conv1d_update`、`tilelang.conv950`（op 级 14.15×） | 基线是 |
 | `gdn_chunk_wu` | `gdn.chunk_wu` | `torch.solve_tril_recompute_wu`、`tilelang.chunk_wu950`（14.55×） | 基线是 |
@@ -114,7 +114,10 @@ pip install -e ".[dev]"                               # 加 pytest
   scale 轴、折叠等价三处取证），但**没有 fp8 计算内核**；**fp4 未实现**（格式、block scale、
   硬件路径都没有可验证的依据，不写猜的）。
 - 因此 `fused_experts` 遇到非空 `quant_config` 会**拒绝**而不是悄悄按 bf16 算——量化路径要等这条接上。
-- **prefill 编排接线**：内核在仓，tile-count 编排属平台侧，尚未接上。
+- **prefill 的"可复用 plan"**：`tilelang.prefill950` 已接线并能跑出与 reference 一致的数值，
+  但**一个 plan 只对应当前这一步的 prompt 长度**（tile 数 = `Σ ceil(qo_len_b · group / block_q)`），
+  跨步复用需要重新规划；这就是它默认关、且 `graph=eager_only` 的原因。没有厂商 prefill A/B，
+  所以 `measured_ratio` 保持 `None` 而不是编一个 1.0。
 
 ## 解耦设计
 
