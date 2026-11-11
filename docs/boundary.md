@@ -64,8 +64,12 @@
    op 的 `platform_name`（schema required）、`pyproject.toml` 的 `ascend_platform.providers` entry
    point、包根 `describe()`、`provider.py` 的工厂（描述符 + `load(语义名)`）。平台：`contracts/provider.py`
    （它自己的 `PROVIDER_GROUP`，与本仓常量由 `tests/test_provider.py` 钉成相等）。
-   实测结果：5 个 MoE 名字 5/5 经 provider 绑定成功；`unquantized_fused_moe` 这个它旧表里的键由本仓
-   `ALIASES` 兼容（`alias_of`），等它的语义词表落地后删。
+   实测结果（`VLLM_PLUGINS=ascend_platform ASCEND_PLATFORM_OPS=ascend_attention`，跑它的
+   `install_ops()`）：**10 bound / 2 unbound / 1 off-by-switch**，此前是 0 bound / 12 unbound。
+   `topk_softmax`、`moe_align_block_size`、`fused_experts` 明确是**经 provider** 绑定的；
+   `unquantized_fused_moe` 这个它旧表里的键由本仓 `ALIASES` 兼容（`alias_of`）后也解析到了本仓函数。
+   两个 unbound 的原因都不在本仓：`chunk_local_cumsum` 是它自己的 declined（理由充分）；
+   `unquantized_fused_moe` 的 patch 把数学函数当类工厂用（`subclass = impl(base)`）。
    **仍有偏差，且不在本仓**：GDN 的 8 个名字平台仍按 vLLM 符号去问（走它自己的 layout 回退，等它 P1 的
    `requirements.py` 改语义名）；`fused_moe_oot.make_oot_method` 是引擎 ABI，归它的 `engine/abi/`。
 3. **引擎 ABI 适配**：把引擎符号接成本仓算法签名，归平台的 `engine/abi/`（本仓不写，也不该写）。

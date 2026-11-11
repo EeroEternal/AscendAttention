@@ -84,12 +84,18 @@ pip install -e ".[dev]"                               # 加 pytest
 - 描述符是 `{"name","version","requires_platform","ops":{语义名:{"target":"module:attribute",...}}}`，
   每个 `target` 都指向一个可调用对象（MoE 计算/采样/布局就是算法函数本身；注意力与 GDN 由
   `entry.py` 的一次性包装 `plan+run`）。
-- 平台侧实测（用它的 `contracts/provider.py`）：5 个 MoE 名字 **5/5 绑定**，其中
-  `unquantized_fused_moe` 是它旧表里的键，本仓以 `alias_of` 别名兼容，等它的语义词表落地后删掉。
+- 平台侧实测（`VLLM_PLUGINS=ascend_platform ASCEND_PLATFORM_OPS=ascend_attention`，跑它的
+  `install_ops()`）：**10 bound / 2 unbound / 1 off-by-switch**。其中 `topk_softmax`、
+  `moe_align_block_size`、`fused_experts` 三个是**经 provider 绑定**的（不是 layout 回退），
+  `unquantized_fused_moe` 这个旧键也经 `alias_of` 解析到了本仓函数。
 
-**仍有偏差的两处不在本仓**：GDN 的 8 个名字平台还在按 vLLM 符号问（走它自己的 layout 回退，
-它的 P1 `requirements.py` 才改成语义名）；`fused_moe_oot.make_oot_method` 那一层是引擎 ABI，归它的
-`engine/abi/`，本仓不提供（也不该提供）。
+**仍有偏差的三处都在平台侧**（本仓不越界去补）：
+
+1. GDN 的 8 个名字它仍按 vLLM 符号去问，走自己的 layout 回退——它的 P1 `requirements.py` 才改语义名；
+2. `unquantized_fused_moe` 的 patch 把本仓**纯数学函数**当成"方法类工厂"用（`subclass = impl(base)`），
+   于是报"target vanished between planning and apply"（其实是被当类调了）。这一层适配归它的
+   `engine/abi/vllm_0_23.py`；描述符里该 op 的 `note` 已写明"这是数学，不是类工厂"；
+3. `silu_and_mul` 被它的开关置为 off（`1 off by switch`），属它的策略层。
 
 ### 明确未实现（写在前面，免得被集成方当成已有能力）
 

@@ -44,6 +44,7 @@ from .manifest import MANIFEST_SCHEMA_VERSION, REQUIRES_PLATFORM, manifest
 
 __all__ = [
     "ENTRY_POINT",
+    "NOTES",
     "ENTRY_POINT_GROUP",
     "ALIASES",
     "PROVIDER_GROUP",
@@ -108,6 +109,24 @@ TARGETS: Mapping[str, str] = {
 #: semantic name is a promise about meaning, and we should not rename it to match someone's legacy key.
 ALIASES: Mapping[str, str] = {
     "unquantized_fused_moe": "moe.experts_unquantized",
+}
+
+
+#: Extra sentences for the descriptor's ``note``, where the target's *shape* is easy to misread.
+#:
+#: The measured case: the platform's table assigned our ``unquantized_fused_moe`` function to a slot that
+#: expects a *method object factory*, so its patch did ``subclass = impl(base)`` and reported "the target
+#: vanished between planning and apply" - the target did not vanish, it was called with a class. A note is
+#: cheap; a week of reading that message is not.
+NOTES: Mapping[str, str] = {
+    "moe.experts_unquantized": (
+        "plain math: (hidden_states, w1, w2, topk_weights, topk_ids, ...) -> hidden_states. It is NOT a "
+        "class factory for an engine's MoE method object; that wrapper belongs to the engine's ABI layer."
+    ),
+    "moe.experts": (
+        "plain math, unquantised only: a non-None quant_config raises instead of silently computing in "
+        "bf16."
+    ),
 }
 
 
@@ -194,7 +213,11 @@ class Provider:
                 "target": target,
                 "dtypes": list(entry["dtypes"]),
                 "graph": "capture_safe" if entry["graph_capturable"] else "eager_only",
-                "note": f"{entry['name']} via {entry['impl']}",
+                "note": " ".join(
+                    part
+                    for part in (f"{entry['name']} via {entry['impl']}", NOTES.get(semantic, ""))
+                    if part
+                ),
                 # The keys below are ours: their parser ignores unknown fields, and a human (or a
                 # doctor command) needs them to tell "bound" from "bound to the oracle".
                 "platform_name": semantic,
