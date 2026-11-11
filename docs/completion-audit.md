@@ -98,17 +98,23 @@
 
 按"要么给证据，要么写没做"的规矩，这七条没有证据，所以不写成完成：
 
-1. **prefill 的编排**：内核（`paged_prefill_ascend950` + split/head/frontier 三个变体）在仓里，
-   但 prefill 一步的 tile 数取决于 batch，`plan()` 的 per-shape 模型表达不了，所以只迁了语义
-   （reference + fp64 oracle）并把它声明成 `enabled=False` 的未接线实现。见 `archive-attention.md`。
+1. **prefill 的"可复用 plan"**：内核（`paged_prefill_ascend950` + split/head/frontier 三个变体）
+   已接线：`plan_prefill(impl="tilelang.prefill950")` 用本仓 `plan_query_tiles_from_host` 生成
+   **这一步**的 schedule（`qo_lens*group` 行），`run()` 走 `forward_prefill`，上卡与 reference 一致
+   （含 append 的 `causal_shift`）。剩下的不是接线问题：一个 plan 的 tile 数就是这一步的 prompt
+   长度，**跨步复用必须重新规划**（`graph=eager_only`、默认关、无厂商 A/B 故 `measured_ratio=None`）。
+   不可复用不算缺口，但"可复用的 prefill plan"确实没有。见 `archive-attention.md`。
 2. **split-KV**：TileInfer 记 3×，但两次把设备卡死（`ACL_ERROR_RT_VECTOR_CORE_EXCEPTION`），
    本批 25 分钟编译扫描未收敛。连候选都不注册，理由在 `archive-attention.md` §3。
 3. **507035 的"单次搬运 <32 B"约束**：还没有机制。试过的一版按"张量最内层 stride"实现，被既有测试
    当场证伪并回退，见 §7 表。
-4. **`vllm_adapter`**：与"全仓零 vllm 依赖"冲突，且需要 vLLM 的 ABI 名；只能放 `integrations/` 才安全，
-   本轮选择不做并记录（P5 行）。
+4. **`vllm_adapter`**：**从本清单删除**——它不是本仓的缺口，而是平台 `engine/abi/` 的职责
+   （引擎符号 → 算法签名的适配）。记在 `docs/boundary.md` §4.3，本仓不做、也不该做。
 5. **head_dim=256 且 K/V 非对称**、**NZ 直吃内核**、**NHD 以外的布局**：契约里声明不支持，不是遗漏。
-6. **7 个内核 flag 还没变成编译规格参数**：已是"单一入口 `utils.kernel_flag` + 统一前缀 + ratchet"，
-   但仍在读进程状态。其中 5 个在 plan/build 期读（值已进编译键），真正在 trace 期读的是
-   `SIMD_SOFTMAX` 与 `PREFILL_NOSCAN_OFF` 两个——参数化要动内核签名与 `spec_key`，需设备复测。
+6. **7 个内核 flag 还没变成编译规格参数**：已是"单一入口 `utils.kernel_flag` + 统一前缀 + ratchet"。
+   **复核后更正**：trace 期读的只有 `SIMD_SOFTMAX` 一个，且它已进 `_cache_key`
+   （`paged_decode_ascend950.py:999-1007`）；`PREFILL_NOSCAN_OFF` 是**调用方**改 `tile_page_lens`
+   的调试开关（`forward_prefill` 内，不进 trace），不影响编译产物；其余在 plan/build 期读或作为显式
+   spec 参数传入。所以"flag 混用同一份编译产物"这条**不成立**，剩下的只是风格问题（参数化能让
+   spec_key 更可读），不再是缺陷。
 7. **服务级 TPOT A/B**：要起引擎，属于平台语义（`docs/reverse-integration.md` §6 的口径）。
