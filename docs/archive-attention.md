@@ -39,3 +39,21 @@
   `tests/test_abi.py` 的一部分失去被测对象；且它带着 `paged_decode_ascend950.py` 之前的历史修复
   （`null_block_id`、尾页掩码），是排障时的对照物。
 - **判决**：不进 manifest，`graph` 记为 `unknown`，不宣称任何性能。
+
+## 5. 可复用的 prefill plan（不是缺口，是定义）
+
+`tilelang.prefill950` 已接线：`plan_prefill` 用本仓 `plan_query_tiles_from_host` 生成本步的
+schedule（`qo_lens * group` 行，M tile 是扁平 `(q_pos, group)` 行），`run()` 走 `forward_prefill`；
+上卡与 `torch.reference` 一致，append 的 `causal_shift = kv_len - qo_len` 由 row-threshold 实现，
+测试里用"改动某 token 之后的 KV 不影响该 token 输出"验证。
+
+所谓"prefill 编排未迁移"的真实含义只有一条：**一个 plan 的 tile 数就是这一步的 prompt 长度**
+（`Σ ceil(qo_len_b·group/block_q)`），所以 plan 不能跨步复用。这不是没接线，也不可能靠加字段解决：
+若要跨步复用，就得让 plan 携带一个"最大 tile 数"的 schedule 并在每步用设备侧操作重填
+`q_len/seq_ids`（`forward_prefill` 的 pack 已经是设备侧索引驱动的，具备这个条件），代价是每步仍要
+一次 host→device 的 schedule 搬运。当前选择是不做：平台的 prefill 路径本来就每步重建 schedule，
+而一个"看起来可复用、实际靠 padding 掩盖"的 plan 比明确的步级 plan 更容易被误用。
+
+没有厂商 prefill 的 A/B，所以 `measured_ratio=None`；给它写 1.0 会让它进 manifest，等于声称
+"和厂商一样快"——那是编的。
+
