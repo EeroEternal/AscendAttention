@@ -51,7 +51,9 @@ pip install -e ".[dev]"                               # 加 pytest
 - **多形态实现 + 库内分派**：目前落地三种形态——TileLang 内核、torch 组合、直调厂商算子
   （AscendC 形态与"搬入的厂商代码"按当前边界**未实现**）；按设备、形状、dtype、布局、**能否进图**在库内分派，
   每个实现声明能力与实测比值，没测过的实现不许默认启用
-- **验证设施**：数值 oracle（离线可跑）、单算子基准与账本（`bench/results/`）
+- **验证设施**：数值 oracle（离线可跑）、单算子基准与账本（`bench/results/`）。设备用例带 `npu` 标记，
+  在 CPU 上跑 `pytest tests -m "not npu"`；**要用到算力卡之前先读 `docs/process-device-access.md`**
+  （机上 HBM 与同事共享，部署模型要先取得同意）
 
 ## 已迁算子（完整清册见 `python -m ascend_attention --capabilities`）
 

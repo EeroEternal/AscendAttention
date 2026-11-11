@@ -114,6 +114,9 @@ attention decode 的 KV 行号、`fused_sigmoid_gating_delta_rule_update` 与 co
 
 ## 复现
 
+**先读 [docs/process-device-access.md](process-device-access.md)：这台机器的 HBM 是共享的，部署模型前要先取得同意。**
+下面是"已经拿到同意之后"的命令。
+
 ```bash
 export VLLM_PLUGINS=ascend_platform
 export ASCEND_PLATFORM_OPS=ascend_attention
