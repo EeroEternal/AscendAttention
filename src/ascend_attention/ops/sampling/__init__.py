@@ -27,9 +27,12 @@ from ...plan import OpPlan
 from ...spec import REGISTRY, ImplSpec, ShapeSpec, dim_min
 
 __all__ = [
-    "MINP_UNIMPLEMENTED",
+    "MINP_OP",
     "NUCLEUS_OP",
+    "min_p_filter",
+    "plan_min_p",
     "plan_top_p",
+    "run_min_p",
     "run_top_p",
     "top_p_filter",
     "OP",
@@ -248,12 +251,6 @@ REGISTRY.planner(GREEDY, plan_greedy)
 # ---------------------------------------------------------------------------------------------
 NUCLEUS_OP = "sampling_top_p"
 
-#: Written down as a constant so "not implemented" is a fact in the code, not only in the README.
-MINP_UNIMPLEMENTED = (
-    "min-p (keep tokens with prob >= min_p * max_prob) is not implemented; it is a different "
-    "rule from top-p and the dispatcher must not pretend one is the other"
-)
-
 NUCLEUS_TORCH = ImplSpec(
     op=NUCLEUS_OP,
     impl="torch.top_p",
@@ -346,6 +343,103 @@ REGISTRY.op(
 )
 REGISTRY.register(NUCLEUS_TORCH)
 REGISTRY.planner(NUCLEUS_OP, plan_top_p)
+
+
+# ---------------------------------------------------------------------------------------------
+# Min-p: keep tokens whose probability is at least ``min_p`` times the row's maximum.
+#
+# A third rule, not a parameter of the other two: top-k cuts by rank, top-p by cumulative mass, min-p
+# by a relative probability floor. The survivor count varies per row for all three, and the *order*
+# matters when they are combined (the reference stacks apply min-p first, then top-k/top-p), so this is
+# its own op and the composition is the caller's documented choice - see `sample()`.
+# ---------------------------------------------------------------------------------------------
+MINP_OP = "sampling_min_p"
+
+MINP_TORCH = ImplSpec(
+    op=MINP_OP,
+    impl="torch.min_p",
+    form="torch",
+    device="any",
+    shape=_SHAPE,
+    kv_layouts=frozenset({"ND"}),
+    graph="capture_safe",
+    plan_kind="stateless",
+    enabled_by_default=True,
+    measured_ratio=1.0,
+    bench="bench/bench_sampling_min_p.py",
+    ratio_note=(
+        "definitional 1.0: the only implementation. Two passes over the vocabulary (max, compare), no "
+        "sort; the ledger records absolute latency at B=8, V=152064."
+    ),
+    note=(
+        "relative floor: keep prob >= min_p * max_prob. p=1 keeps only the argmax (ties included), p<=0 "
+        "keeps everything. Cheaper than top-p because it needs no sort - that is why a serving stack "
+        "applies it first."
+    ),
+)
+
+
+def min_p_filter(logits: torch.Tensor, p: float) -> torch.Tensor:
+    """Set every logit below ``p * max_prob`` to ``-inf``; ``p <= 0`` is the identity.
+
+    Computed in the input dtype for the same reason as :func:`top_p_filter`: promotion changes which
+    tokens are on the boundary, and a sampler that moves its own boundary is not a drop-in.
+
+    ``p >= 1`` is *not* the identity: only tokens tied with the row maximum survive, which is the
+    documented behaviour of the reference stack (min_p=1 degenerates to greedy over ties). Keeping it
+    that way means a caller can pin min_p=1.0 to get "one token per row" without a separate code path.
+    """
+    p = float(p)
+    if p <= 0.0:
+        return logits.clone()
+    probs = torch.softmax(logits, dim=-1)
+    floor = probs.max(dim=-1, keepdim=True).values * p
+    return logits.masked_fill(probs < floor, float("-inf"))
+
+
+def plan_min_p(impl: ImplSpec, **pure: Any) -> OpPlan:
+    batch = int(pure["batch"])
+    vocab = int(pure["vocab"])
+    p = float(pure["p"])
+    dtype = str(pure.get("dtype", "bfloat16"))
+    if batch < 1 or vocab < 1:
+        raise ValueError(f"{MINP_OP}: batch and vocab must be >= 1, got {batch}, {vocab}")
+    if not 0.0 <= p <= 1.0:
+        raise ValueError(f"{MINP_OP}: p must be in [0, 1], got {p}")
+    if dtype not in _DTYPES:
+        raise ValueError(f"{MINP_OP}: dtype {dtype!r} is outside {sorted(_DTYPES)}")
+
+    def execute(logits):
+        if logits.dim() != 2 or tuple(logits.shape) != (batch, vocab):
+            raise ValueError(
+                f"{MINP_OP}/{impl.impl}: logits must be {(batch, vocab)}, got {tuple(logits.shape)}"
+            )
+        return min_p_filter(logits, p)
+
+    return OpPlan(
+        op=MINP_OP,
+        impl=impl.impl,
+        plan_kind=impl.plan_kind,
+        shape=(batch, vocab),
+        dtypes=(dtype,),
+        kv_layouts=tuple(sorted(impl.kv_layouts)),
+        graph=impl.graph,
+        meta={"p": p, "rule": "relative_floor"},
+        execute=execute,
+    )
+
+
+def run_min_p(p: OpPlan, logits):
+    return p(logits)
+
+
+REGISTRY.op(
+    MINP_OP,
+    doc="Min-p sampling: keep tokens with prob >= min_p * max_prob. Applied before top-k/top-p in "
+    "the reference stack; p=1 keeps the argmax only.",
+)
+REGISTRY.register(MINP_TORCH)
+REGISTRY.planner(MINP_OP, plan_min_p)
 
 
 def sampler_for(do_sample: bool) -> str:

@@ -56,11 +56,10 @@ def test_unimplemented_features_are_labelled():
     text = _text()
     for phrase, marker in [
         ("MoE 的内核化", "未实现"),
-        ("min-p", "未实现"),
         ("AscendC", "未实现"),
         ("引擎适配不在本仓", "平台"),
         ("MLA", "未实现"),
-        ("量化", "未实现"),
+        ("量化（fp8/fp4）", "未实现"),
         ("供给契约的代码侧尚未定稿", "platform_name"),
     ]:
         assert phrase in text, f"README lost the note about {phrase!r}"

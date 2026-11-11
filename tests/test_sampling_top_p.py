@@ -15,7 +15,7 @@ import pytest
 import torch
 
 from ascend_attention import plan, run
-from ascend_attention.ops.sampling import MINP_UNIMPLEMENTED, NUCLEUS_OP, top_p_filter
+from ascend_attention.ops.sampling import NUCLEUS_OP, top_p_filter
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -141,12 +141,21 @@ def test_plan_and_run_and_the_dtype_contract():
         run(p, torch.randn(3, 8, dtype=torch.bfloat16))
 
 
-def test_min_p_is_named_as_unimplemented_and_not_aliased():
-    """A docstring that says "not implemented" while a flag silently maps to top-p is the failure mode."""
-    assert "min-p" in MINP_UNIMPLEMENTED
+def test_top_p_and_min_p_are_separate_ops_not_two_names_for_one_rule():
+    """Two different rules, two ops: a flag that silently mapped one onto the other would be a
+    distribution change that no test of either rule alone would catch."""
+    from ascend_attention.ops.sampling import MINP_OP, min_p_filter
     from ascend_attention.spec import REGISTRY
 
-    assert not [name for name in REGISTRY.names() if "min_p" in name or "minp" in name]
+    assert MINP_OP in REGISTRY.names()
+    # probs ~ [0.716, 0.263, 0.022]: top-p=0.6 stops after the first token (mass already >= p), while
+    # min-p=0.1 keeps the second as well (0.263 >= 0.1 * 0.716). Same inputs, same parameters family,
+    # different survivor set - which is the point.
+    logits = torch.tensor([[4.0, 3.0, 0.5]], dtype=torch.float64)
+    top_p_kept = torch.isfinite(top_p_filter(logits, 0.6))
+    min_p_kept = torch.isfinite(min_p_filter(logits, 0.1))
+    assert top_p_kept.tolist() == [[True, False, False]]
+    assert min_p_kept.tolist() == [[True, True, False]]
 
 
 def test_manifest_entry_bench_and_ledger_exist():

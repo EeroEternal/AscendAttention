@@ -47,7 +47,7 @@ pip install -e ".[dev]"                               # 加 pytest
   （`moe_silu_and_mul`）、非量化专家计算（`moe_fused_experts` / `moe_unquantized_fused_moe`）
   五个**算子**，加 token 对齐（slot 布局）与权重打包（ND → compact-NZ）——MoE 的数学全在本仓；
   平台只负责把它们绑到引擎符号上
-- **采样**：greedy、阈值式 top-k（保留并列）、nucleus top-p（前缀式，保留最多可能 token）；min-p **未实现**
+- **采样**：greedy、阈值式 top-k（保留并列）、nucleus top-p（前缀式）、min-p（相对概率下限，无排序）
 - **多形态实现 + 库内分派**：目前落地三种形态——TileLang 内核、torch 组合、直调厂商算子
   （AscendC 形态与"搬入的厂商代码"按当前边界**未实现**）；按设备、形状、dtype、布局、**能否进图**在库内分派，
   每个实现声明能力与实测比值，没测过的实现不许默认启用
@@ -71,9 +71,10 @@ pip install -e ".[dev]"                               # 加 pytest
 | `moe_unquantized_fused_moe` | `moe.experts_unquantized` | `torch.unquantized_fused_moe` | 是（基线） |
 | `sampling_topk_threshold` | `sampling.topk_threshold` | `torch.topk_threshold`、`vendor.deep_select`（**3.8432×**，唯一默认开启的非基线条目） | 两者都是 |
 | `sampling_top_p` | `sampling.top_p` | `torch.top_p`（13.55 ms @ B=8/V=152064/p=0.9，CPU） | 是（基线） |
+| `sampling_min_p` | `sampling.min_p` | `torch.min_p`（**0.93 ms** 同形状——无排序，所以快 14.5×） | 是（基线） |
 | `sampling_greedy` | `sampling.greedy` | `torch.argmax` | 是 |
 
-`manifest.json` 只收"有实测比值且默认启用"的实现（14 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
+`manifest.json` 只收"有实测比值且默认启用"的实现（16 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
 两者的分工见 `docs/contracts/exposure.md`。
 
 平台按**语义名**（第二列）绑定，不按本仓的 op 名。本仓这一半已就位并经过跨仓实测：
@@ -102,8 +103,6 @@ pip install -e ".[dev]"                               # 加 pytest
 - **MoE 的内核化**：计算已是纯 torch 基线（正确性有 fp64 定义式取证），但**没有加速内核**；
   `grouped_gemm` 0.86×、`prenz` 直吃、`align_*` 未达门槛都只归档，理由见 `docs/archive-moe.md`。
 - **MLA**、**量化（fp8/fp4）算子**：属本仓的算子面，未实现。
-- **采样**：min-p 未实现（它是另一条规则——`prob >= min_p * max_prob`——不会被别名成 top-p；
-  `ops/sampling/__init__.py` 的 `MINP_UNIMPLEMENTED` 把这句话写在代码里）。
 - **prefill 编排接线**：内核在仓，tile-count 编排属平台侧，尚未接上。
 
 ## 解耦设计

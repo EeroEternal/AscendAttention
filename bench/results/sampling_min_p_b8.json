@@ -1,0 +1,23 @@
+{
+  "op": "sampling_min_p",
+  "impl": "torch.min_p",
+  "shape": {
+    "batch": 8,
+    "vocab": 152064,
+    "p": 0.1
+  },
+  "dtype": "float32",
+  "device": "cpu",
+  "measured_ratio": 1.0,
+  "ratio_note": "definitional 1.0: the only implementation; no sort, so this is the cheap end of the sampling chain and the number a kernel has to beat",
+  "survivors_median": 2532,
+  "ms": {
+    "min_p": {
+      "median_ms": 0.9329,
+      "min_ms": 0.5731
+    }
+  },
+  "command": "bench/bench_sampling_min_p.py --device cpu --batch 8",
+  "host": "tileinfer-102",
+  "date": "2026-11-11T11:43:38+0800"
+}

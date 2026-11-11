@@ -446,6 +446,37 @@
         "torch.top_p"
       ],
       "form": "torch"
+    },
+    {
+      "name": "sampling_min_p",
+      "platform_name": "sampling.min_p",
+      "shapes": {
+        "ndim": 2,
+        "dims": [
+          {
+            "min": 1
+          },
+          {
+            "min": 1
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": true,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_sampling_min_p.py",
+      "impl": "torch.min_p",
+      "impls": [
+        "torch.min_p"
+      ],
+      "form": "torch"
     }
   ]
 }

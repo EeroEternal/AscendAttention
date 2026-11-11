@@ -97,6 +97,7 @@ TARGETS: Mapping[str, str] = {
     "sampling.topk_threshold": "ascend_attention.ops.sampling:topk_threshold",
     "sampling.greedy": "ascend_attention.ops.sampling:greedy",
     "sampling.top_p": "ascend_attention.ops.sampling:top_p_filter",
+    "sampling.min_p": "ascend_attention.ops.sampling:min_p_filter",
 }
 
 

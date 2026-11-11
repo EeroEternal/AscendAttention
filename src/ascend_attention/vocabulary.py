@@ -44,6 +44,7 @@ PLATFORM_NAMES: Mapping[str, str] = {
     # sampling
     "sampling_topk_threshold": "sampling.topk_threshold",
     "sampling_top_p": "sampling.top_p",
+    "sampling_min_p": "sampling.min_p",
     "sampling_greedy": "sampling.greedy",
 }
 
