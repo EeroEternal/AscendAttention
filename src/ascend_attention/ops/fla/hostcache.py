@@ -17,7 +17,7 @@ Safety
   key can never be recycled into a different tensor's address (the same argument as
   ``recurrent._decode_constants``).
 * The key includes the shape and dtype, so a reshaped or re-dtyped tensor misses.
-* ``TILEINFER_GDN_HOST_CACHE=0`` (or the ``gdn_host_cache`` file flag) turns it off, in which case
+* ``ASCEND_ATTENTION_GDN_HOST_CACHE=0`` (or the ``gdn_host_cache`` file flag) turns it off, in which case
   every call reconverts -- i.e. exactly the old behaviour.
 * Nothing here changes arithmetic: the values returned are the same Python ints ``tolist()`` gives.
 """
@@ -41,11 +41,11 @@ def _enabled() -> bool:
     per layer and they are layer-invariant — but the paired prefill measurement came out at **0.999
     (4 pairs, sign mixed, spread 13.6%)**: those conversions are cheap enough that removing them is
     invisible next to the rest of a prefill step.  So it is kept as an opt-in
-    (``TILEINFER_GDN_HOST_CACHE=1``) rather than paying cache bookkeeping for nothing.
+    (``ASCEND_ATTENTION_GDN_HOST_CACHE=1``) rather than paying cache bookkeeping for nothing.
     """
-    from tileinfer.serving import flags  # noqa: PLC0415
+    from ...flags import flag
 
-    return flags.flag("gdn_host_cache", "TILEINFER_GDN_HOST_CACHE", False)
+    return flag("GDN_HOST_CACHE", False)
 
 
 def _key(tensor: Any) -> Tuple[Any, ...]:

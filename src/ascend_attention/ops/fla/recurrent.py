@@ -266,9 +266,9 @@ _DECODE_CONST_CACHE_MAX = 256
 
 def _decode_constants(A_log, dt_bias, H, HV, device, working):
     """``(hv_to_h, A_w, dtb_w)`` for the decode operator, cached per layer."""
-    from tileinfer.serving import flags  # noqa: PLC0415 - measurement channel, off by default
+    from ...flags import flag
 
-    use_cache = flags.flag("gdn_cache", "TILEINFER_GDN_CACHE", True)
+    use_cache = flag("GDN_CACHE", True)
     key = (
         id(A_log),
         A_log.data_ptr(),
@@ -714,10 +714,10 @@ def fused_recurrent_gated_delta_rule_packed_decode(
     #: per GDN layer -- 30 per decode step (§32 measured the same pattern in the conv at ~0.5 ms
     #: each).  It is **opt-in** because the price is the loud out-of-range check: without the host
     #: read an out-of-range slot is clamped, not raised, so the default keeps vLLM's contract and
-    #: the fast path has to be asked for (``TILEINFER_GDN_NO_SYNC=1``, or the ``gdn_no_sync`` flag).
-    from tileinfer.serving import flags  # noqa: PLC0415
+    #: the fast path has to be asked for (``ASCEND_ATTENTION_GDN_NO_SYNC=1``, or the ``gdn_no_sync`` flag).
+    from ...flags import flag
 
-    sync_free = flags.flag("gdn_no_sync", "TILEINFER_GDN_NO_SYNC", False)
+    sync_free = flag("GDN_NO_SYNC", False)
 
     for n in range(B):
         # Line 292: one state row per token (1-D, so ``indices[n]`` honours stride(0) exactly as

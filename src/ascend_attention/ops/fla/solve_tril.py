@@ -173,12 +173,12 @@ def _batched_solve_enabled() -> bool:
     ``ceil(log2(BT))`` steps are exact for a nilpotent-index-``BT`` strictly-lower part.  Six batched
     matmuls replace a 64-step dependency chain.
 
-    ``TILEINFER_GDN_SOLVE_BATCH=0`` restores the per-block forward substitution; every oracle test
+    ``ASCEND_ATTENTION_GDN_SOLVE_BATCH=0`` restores the per-block forward substitution; every oracle test
     passes on both paths.
     """
-    from tileinfer.serving import flags  # noqa: PLC0415
+    from ...flags import flag
 
-    return flags.flag("gdn_solve_batch", "TILEINFER_GDN_SOLVE_BATCH", True)
+    return flag("GDN_SOLVE_BATCH", True)
 
 
 def prepare_chunk_indices(cu_seqlens: torch.Tensor, chunk_size: int) -> torch.Tensor:

@@ -28,6 +28,7 @@ strings that can no longer resolve the enclosing function's locals.
 
 import math
 import os
+from ...abi import quantise_tiles
 from ...utils import kernel_flag, kernel_flag_bool
 from typing import Any, List, Optional
 
@@ -2379,6 +2380,41 @@ def forward_split(
     return result
 
 
+def _pad_schedule(schedule, cap_tiles: int, device):
+    """Append inert tiles up to ``cap_tiles`` so one compiled variant serves a range of lengths.
+
+    An appended tile has ``q_len == 0``, which is the state the kernel and the pack/unpack loop
+    already treat as padding (P3): it reads no query rows, contributes nothing to ``row_thr`` (its
+    threshold stays -1) and its page count is 0, so it costs a few idle blocks and no arithmetic.
+    ``seq_ids``/``q_offsets`` point at request 0 so any index arithmetic stays in bounds.
+    """
+    import types
+
+    live = int(schedule.q_lens.numel())
+    if cap_tiles <= live:
+        return schedule
+    pad = cap_tiles - live
+    zero_i32 = torch.zeros((pad,), dtype=torch.int32, device=device)
+
+    def _extend(name):
+        value = getattr(schedule, name, None)
+        if value is None:
+            return None
+        return torch.cat([value.to(torch.int32), zero_i32]).contiguous()
+
+    padded = types.SimpleNamespace(
+        seq_ids=_extend("seq_ids"),
+        q_offsets=_extend("q_offsets"),
+        q_lens=_extend("q_lens"),
+        kv_page_starts=_extend("kv_page_starts"),
+        kv_page_lens=_extend("kv_page_lens"),
+        split_ids=_extend("split_ids"),
+        split_counts=_extend("split_counts"),
+    )
+    padded.num_tiles = cap_tiles
+    return padded
+
+
 def _pack_indices(schedule, kv_heads: int, rows_per_req: int, br: int, num_tiles: int,
                   total_rows: int, dev) -> tuple:
     """The gather index and validity mask for packing Q into the kernel's tile layout.
@@ -2443,7 +2479,12 @@ def forward_prefill(
     page_size = int(k_cache.shape[1])
     dtype = dtype or _TORCH_TO_TILELANG_DTYPE[q.dtype]
     br = block_q
-    num_tiles = schedule.num_tiles
+    live_tiles = schedule.num_tiles
+    # One compiled variant per *bucket*, not per length: ``num_tiles`` grows linearly with the prompt,
+    # so keying the kernel on it recompiled for every new sequence length (129.7 s of prefill in a
+    # 192-token run, against 0.8 s with the kernel built). Padding a tile is already inert.
+    num_tiles = quantise_tiles(live_tiles)
+    schedule = _pad_schedule(schedule, num_tiles, q.device)
     assert num_qo_heads == kv_heads * group
 
     # [batch, kv_heads, group, q_pos, dim] -> [batch, kv_heads, q_pos * group, dim]

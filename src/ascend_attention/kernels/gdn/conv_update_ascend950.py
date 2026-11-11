@@ -25,7 +25,7 @@ Structure mirrors ``chunk_wu_ascend950.py``: a plain factory returns the ``T.pri
 ``tilelang.compile`` wraps it — ``tilelang.jit`` cannot decorate the factory because it re-parses the
 decorated source and loses the enclosing scope (measured: ``NameError: name 'C' is not defined``).
 
-**Experimental and default-off** (``TILEINFER_GDN_CONV_KERNEL=1``): it must be exercised on the device
+**Experimental and default-off** (``ASCEND_ATTENTION_GDN_CONV_KERNEL=1``): it must be exercised on the device
 against ``tests/test_gdn_causal_conv1d.py`` before it may become a default (C2/E4).
 """
 

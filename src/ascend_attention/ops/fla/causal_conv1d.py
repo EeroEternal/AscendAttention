@@ -268,11 +268,11 @@ def _conv_lib_enabled() -> bool:
     **Default off, because it was measured**: paired against the vectorised torch form it came out at
     **1.004** — no difference, 4/4 pairs inside ±2.1% (§42).  The two forms cost the same, so the
     default keeps the one with fewer dependencies (no grouped-conv kernel) and this stays available
-    as ``TILEINFER_GDN_CONV_LIB=1``.
+    as ``ASCEND_ATTENTION_GDN_CONV_LIB=1``.
     """
-    from tileinfer.serving import flags  # noqa: PLC0415
+    from ...flags import flag
 
-    return flags.flag("gdn_conv_lib", "TILEINFER_GDN_CONV_LIB", False)
+    return flag("GDN_CONV_LIB", False)
 
 
 def _conv_fast_enabled() -> bool:
@@ -280,11 +280,11 @@ def _conv_fast_enabled() -> bool:
 
     instead of ``width-1`` column gathers).  On by default — the values are identical and the
     contract tests run both shapes — and switchable so the end-to-end effect can be measured in one
-    process (``TILEINFER_GDN_CONV_FAST=0``, or the ``gdn_conv_fast`` flag file).
+    process (``ASCEND_ATTENTION_GDN_CONV_FAST=0``, or the ``gdn_conv_fast`` flag file).
     """
-    from tileinfer.serving import flags  # noqa: PLC0415
+    from ...flags import flag
 
-    return flags.flag("gdn_conv_fast", "TILEINFER_GDN_CONV_FAST", True)
+    return flag("GDN_CONV_FAST", True)
 
 
 def _depthwise_causal_conv(
@@ -557,36 +557,12 @@ def _conv_capture_safe_enabled() -> bool:
     Python ``int`` per sequence, and a synchronous copy inside a captured graph is illegal (§70/§71:
     this is the last one on the decode path, 30 per step, one per GDN layer).
 
-    ``TILEINFER_GDN_CONV_CAPTURESAFE=1`` selects it; it is default **off** until it is measured and
+    ``ASCEND_ATTENTION_GDN_CONV_CAPTURESAFE=1`` selects it; it is default **off** until it is measured and
     has run against the oracles, matching every other candidate in this repo (C2).
     """
-    from tileinfer.serving import flags  # noqa: PLC0415
+    from ...flags import flag
 
-    return flags.flag("gdn_conv_capture_safe", "TILEINFER_GDN_CONV_CAPTURESAFE", False)
-
-
-def _conv_kernel_enabled() -> bool:
-    """``TILEINFER_GDN_CONV_KERNEL=1`` — run the decode conv update through the fused kernel (§88).
-
-    Default **off**: the kernel has a 42.5x in-process ratio on the device but has to clear the
-    oracle suite and an end-to-end paired measurement before it may be a default (C2/E4).
-    """
-    from tileinfer.serving import flags  # noqa: PLC0415
-
-    return flags.flag("gdn_conv_kernel", "TILEINFER_GDN_CONV_KERNEL", False)
-
-
-#: How many fused-kernel launches have failed and fallen back to the torch path (diagnostics only).
-_CONV_KERNEL_FALLBACKS = 0
-
-#: ``(channels, device) -> zeros[channels] fp32`` for the ``bias is None`` case.  Without this the
-#: fused path allocated a fresh zeros tensor on every layer of every decode step (30 per step).
-_ZERO_BIAS_CACHE: dict = {}
-
-
-#: ``(data_ptr, dtype, numel) -> fp32 bias``.  The GDN conv bias is a bf16 parameter, and converting
-#: it on every layer of every decode step was a fresh 32 KB copy 30 times per step (§92).
-_BIAS_FP32_CACHE: dict = {}
+    return flag("GDN_CONV_CAPTURESAFE", False)
 
 
 def _fp32_bias(bias: torch.Tensor) -> torch.Tensor:
@@ -619,71 +595,6 @@ def _zero_bias(channels: int, device) -> torch.Tensor:
     return buffer
 
 
-def _try_conv_kernel(x_seq, conv_state, weight, bias, line: int, conv_dtype):
-    """One fused conv+SiLU+state-shift call, or ``None`` when this shape/branch cannot use it.
-
-    The kernel is built per exact shape and only supports the plain decode case: one token, one
-    request, ``width == 4``, bf16 state, channels divisible by the core count.  Everything else
-    returns ``None`` so the caller keeps its torch path — a wrong-shape call would either fail or,
-    worse, silently compute the wrong window.
-    """
-    if conv_dtype != torch.bfloat16:
-        return None
-    try:
-        from tileinfer.kernels.gdn.conv_update_ascend950 import (  # noqa: PLC0415
-            build_conv_update_kernel,
-            gdn_conv_update_kernel_available,
-        )
-    except Exception:  # pragma: no cover - kernel module missing
-        return None
-    if not gdn_conv_update_kernel_available():
-        return None
-    channels = int(weight.shape[0])
-    width = int(weight.shape[1])
-    lines = int(conv_state.shape[0])
-    if width != 4 or channels % 32 != 0 or int(conv_state.shape[2]) != width - 1:
-        return None
-    # The kernel receives raw pointers and assumes dense ``[L, C, taps]`` / ``[C, W]`` layouts.  A
-    # view (a slice of a bigger state pool, a transposed weight) would make it read the wrong
-    # addresses and return *plausible* wrong numbers — the worst failure mode.  Refuse those.
-    if not conv_state.is_contiguous() or not weight.is_contiguous():
-        return None
-    if x_seq.numel() != channels or not x_seq.is_contiguous():
-        return None
-    out = torch.empty(channels, dtype=conv_dtype, device=conv_state.device)
-    # The kernel declares the bias as fp32 (matching ``bias``'s eager dtype), so cast rather than
-    # letting a bf16 bias raise inside the launch — that raise used to be swallowed by the fallback
-    # below and made the integration probe look like "identical output", i.e. "kernel not taken".
-    bias_t = _zero_bias(channels, conv_state.device) if bias is None else _fp32_bias(bias)
-    try:
-        kernel = build_conv_update_kernel(
-            channels=channels, width=width, lines=lines, dtype="bfloat16"
-        )
-        kernel(
-            x_seq.reshape(-1).to(conv_dtype).contiguous(),
-            conv_state,
-            weight,
-            bias_t,
-            int(line),
-            out,
-        )
-    except Exception as exc:  # noqa: BLE001 - a kernel problem must degrade, not kill the engine
-        # Counted, not silent: a silent fallback is indistinguishable from "the kernel ran and gave
-        # the same answer", which is exactly the confusion §89 records.
-        global _CONV_KERNEL_FALLBACKS
-        _CONV_KERNEL_FALLBACKS += 1
-        if _CONV_KERNEL_FALLBACKS <= 3:
-            import logging  # noqa: PLC0415
-
-            logging.getLogger(__name__).warning(
-                "TileInfer: fused conv kernel fell back to torch (%s: %s)",
-                type(exc).__name__,
-                exc,
-            )
-        return None
-    return out
-
-
 def _conv_state_single_write() -> bool:
     """Write the new conv window with one contiguous store instead of two strided ones.
 
@@ -693,9 +604,9 @@ def _conv_state_single_write() -> bool:
     **ratio 0.926** with a sign that flips across pairs (§83).  Kept as a switch because the
     *measurement* it triggered is the valuable part.
     """
-    from tileinfer.serving import flags  # noqa: PLC0415
+    from ...flags import flag
 
-    return flags.flag("gdn_conv_state1", "TILEINFER_GDN_CONV_STATE1", False)
+    return flag("GDN_CONV_STATE1", False)
 
 
 #: ``(device, num_cache_lines, batch)`` shapes whose cache indices have been bounds-checked once.
@@ -977,23 +888,6 @@ def causal_conv1d_update(
         state_len_eff = base_state_len - (seqlen_outer - length)
 
         line_view = conv_state[line]  # [dim, n_state], read before the write (STEP 1 / STEP 2 order)
-
-        # Experimental fused kernel (§88): one launch for conv+bias+SiLU+state shift.  The condition
-        # is "one token per sequence" (``length == 1``), **not** ``batch == 1``: serving runs with
-        # ``--max-num-seqs 4``, so requiring a single-sequence batch made the kernel unreachable in
-        # practice (§91).  The loop below is already per sequence, so each call gets its own line and
-        # its own ``[dim]`` row.
-        if (
-            _conv_kernel_enabled()
-            and not varlen
-            and accepted is None
-            and offset == 0
-            and length == 1
-        ):
-            fused = _try_conv_kernel(x_seq, conv_state, weight, bias, line, conv_dtype)
-            if fused is not None:
-                out[seq, :, 0] = fused.to(original_x_dtype).reshape(-1)
-                continue
 
         prior = _prior_window(line_view, offset, width)  # [width-1, dim]
         y = _depthwise_causal_conv(x_seq, weight, bias, prior, width, use_silu)

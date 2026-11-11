@@ -19,6 +19,7 @@ import os
 from typing import Any, Optional
 
 __all__ = [
+    "quantise_tiles",
     "ENV_POOL_CAP",
     "ENV_POOL_CAP_LEGACY",
     "padded_rows",
@@ -110,3 +111,31 @@ def capacity_view(pool: Any, cap: int) -> Any:
 def pool_view(k_cache: Any, cap: int) -> Any:
     """Kernel call-site spelling of :func:`capacity_view`."""
     return capacity_view(k_cache, cap)
+
+
+#: Prefill tile counts are bucketed to powers of two before they reach the compiler.  ``num_tiles``
+#: is a *linear function of the prompt length*, so keying the compiled variant on it (which
+#: :func:`_cache_key` does, deliberately: anything that changes the emitted program must be in the
+#: key) recompiled the kernel for every new sequence length - measured at 129.7 s / 112.9 s of
+#: prefill in a 192-token run, against 0.8 s for the same step with the kernel already built.  The
+#: plan is still per step (that part is a contract); the *compiled artifact* is now shared by every
+#: step whose tile count fits the bucket.
+_TILE_BUCKETS = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024)
+
+
+def quantise_tiles(num_tiles: int) -> int:
+    """Round a live tile count up to the next bucket (at least 1).
+
+    Padding is already a supported state (P3: padded tiles carry ``q_len == 0`` and are skipped by
+    the pack/unpack loops and by the kernel's own row mask), so the only cost is a slightly larger
+    buffer, not a different computation.
+    """
+    if num_tiles < 0:
+        raise ValueError(f"quantise_tiles expects a non-negative count, got {num_tiles}")
+    for bucket in _TILE_BUCKETS:
+        if num_tiles <= bucket:
+            return bucket
+    raise ValueError(
+        f"num_tiles={num_tiles} exceeds the largest bucket ({_TILE_BUCKETS[-1]}); raise the bucket "
+        "table deliberately, with a measurement, rather than compiling one variant per step"
+    )

@@ -73,34 +73,33 @@ sorted_ids, expert_ids, num_tokens_post_pad, expert_map)` vs 本仓的 `(topk_id
 本模型的 torch 专家路径不经过它（我们的 `fused_experts` 直接吃 `topk_ids`），所以没崩；换模型或换专家
 内核就会崩，应该一起加适配。
 
-## 已发现但未归因：长生成会退化
+## 长生成：平台侧已定位为 NaN，不是逐 token 变差
 
-8 tokens 时输出正常，**64 tokens 时同一条 prompt 退化成复读**（确定性复现，两次运行逐字相同）：
+早先在这里记的是"64 tokens 退化成复读"。平台侧用 `tools/diag_longgen.py` 把它测成了具体形状：
+`k=0..13` prefill 与 decode 的 argmax 一致，`k>=14` 起 `token_id` 恒为 0（`'!'`）、`lp_dec = nan`，
+之后一直是 `!` ——**一次 NaN 被 greedy 锁死在 token 0，NaN 又经 KV 回灌，所以永远吐同一个 token**，
+不是"模型越写越差"。那 17/256 的 MISMATCH 全部落在 11–31 的近 tie 区，是两条路径的数值差，不是损坏。
 
-```
-<think>
-Here's a thinking process:
+三组对照（同一平台、同一模型）：本仓当算子层 / TileInfer 当算子层 / `TILEINFER_OPS=moe`（GDN 交给
+vLLM FLA）——三组都在同一位置崩。这个证据把范围压到"三者共享的东西"：平台的 attention impl 与
+KV/hybrid-state 交接、模型接入（rope/位置）。**一个需要确认的点**：第三组要成立，必须先确认那台机器上
+vLLM 的 FLA 真能跑——本会话里同一环境出现过 `Failed to import Triton kernels`，若 FLA 实际没生效，
+"排除 GDN"这一步就不成立。
 
-1.  **Understand User Query:** The user wants a concise explanation of how "paged memory" works in!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-```
+本仓这两处已经排除并留下了守卫：内核（`ASCEND_ATTN_CANDIDATES=off` 输出逐字相同）与 recurrent decode
+（`tests/test_gdn_recurrent.py` 逐元素对齐）。
 
-所以现在只能说"跑得动"，不能说"跑对了"。已经排除的两个方向：
+## prefill 的重复编译：键里有"随长度变化"的数
 
-1. **不是本仓的 tilelang 内核**：`ASCEND_ATTN_CANDIDATES=off`（关掉本仓全部候选实现，退回 baseline）重跑，
-   输出逐字相同 —— 候选内核没参与。
-2. **不是本仓的 recurrent decode 算子**：新加 `tests/test_gdn_recurrent.py`，把 packed-decode 形态按
-   `T` 次调用携带 state 和 sequence 形态在同一组 token 上逐元素对齐（`atol=1e-5`），末步输出与末态都一致；
-   另加无效 state 行（`<=0`）不写状态、写零的用例。这两个形态此前**没有测试**（模块 docstring 引用了
-   `tests/test_gdn_recurrent.py`，文件却不存在），是真实缺口，不是修饰。
+平台侧测到 192 token 的一轮里 GDN prefill 编译花掉 129.7 s（对照同一步 0.8 s）。根因不是
+`TILELANG_CACHE_DIR` 没接上（磁盘缓存是按 key 存的，key 稳定就命中），而是**编译键里含长度派生值**：
+本仓 `build_prefill_kernel` 的 spec 带 `num_tiles`（= Σ ceil(qo_len·group/block_q)，长度的线性函数），
+平台侧 prefill 的 key 带 `width`（这一步要扫的 kernel pages）。两边都每步换一个数，于是每步一个新变体。
 
-仍未归因的候选，按怀疑度排序：平台的 GDN 状态布线（conv_state / ssm_state_indices 的行号与推进）、
-attention decode 的 KV 行号、`fused_sigmoid_gating_delta_rule_update` 与 conv1d 的组合（本仓，无独立测试）。
-
-**vendor 对照跑不了**：`/home/dlb/.venv_ascend` 里 vllm_ascend 的 Qwen3.6 路径缺
-`_C_ascend.npu_causal_conv1d_custom`（`AttributeError`），也就是说这条模型在 vendor 栈上现在也跑不起来——
-这正是"自己写一层"的理由，但也意味着没有现成的参考输出可比。可用替代 oracle：`transformers` 直接在 NPU
-上贪心解码同一 prompt，或逐步比较 `fused_sigmoid_gating_delta_rule_update` 与
-（`causal_conv1d_update` + 序列形态）的合成。
+本仓已改成按**桶**编译：`num_tiles` 先量化到 2 的幂（`abi.quantise_tiles`），多出来的 tile 是空 tile
+（`q_len == 0`，内核与 pack/unpack 本来就按 P3 跳过），所以只是缓冲区略大，计算不变。键因此对
+"同一桶内的任意长度"稳定；`tests/test_prefill_tile_bucket.py` 用假编译器在 CPU 上验了这一点（两个不同
+长度的 spec/key 完全相同，跨桶则不同）。平台侧对应的是把 `width` 也量化到桶。
 
 ## 非阻塞项（不影响"跑通"，影响"可用"）
 
