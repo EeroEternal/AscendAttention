@@ -101,6 +101,21 @@ vLLM 的 FLA 真能跑——本会话里同一环境出现过 `Failed to import 
 "同一桶内的任意长度"稳定；`tests/test_prefill_tile_bucket.py` 用假编译器在 CPU 上验了这一点（两个不同
 长度的 spec/key 完全相同，跨桶则不同）。平台侧对应的是把 `width` 也量化到桶。
 
+上卡确认过（2026-11-11，单卡，无模型）：
+
+| 用例 | 结果 |
+|---|---|
+| 同桶两个长度（live 2 / 2 tiles，L=20 与 L=30） | `kernels` 计数 1 → 1，**复用、0.0 s** |
+| 跨桶（L=40，3 tiles） | 新编译 38.6 s，`kernels` 1 → 2 |
+| 三个长度的数值 vs `torch.reference` | `max|diff| = 9.77e-4`（bf16，容差 2e-2） |
+| 设备套件 `test_prefill_kernel_device`/`test_decode_device`/`test_gdn_conv_device` | 10 passed |
+
+顺带把 Qwen3.6 的确切 decode 形状单独量了一遍（`h_kv=2`、`group=8`、`head_dim=256`、`page_size=128`、
+kv_len 1…257 覆盖到 k=14）：**没有 NaN**，`max|diff| ≤ 2.4e-3`。也就是说"k=14 起 `lp_dec = nan`"
+不可能是这个内核在这个形状上的算术问题——它落在平台侧的元数据/状态交接或模型接入上。
+（另记一条边界：`head_dim=256` 配 `page_size ≥ 2048` 编不过，共享内存 204672 < 282624 需要；
+平台用的 `KERNEL_PAGE_SIZE = 128`，不踩这条。）
+
 ## 非阻塞项（不影响"跑通"，影响"可用"）
 
 1. **性能**：8 tokens / 5.7 s ≈ **1.4 tok/s**（vLLM 自带进度条读数）。**归因未做**：候选是纯 torch 的
