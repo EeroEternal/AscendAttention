@@ -43,8 +43,10 @@ from ._version import __version__
 from .manifest import MANIFEST_SCHEMA_VERSION, REQUIRES_PLATFORM, manifest
 
 __all__ = [
+    "ENGINE_NAMESPACE",
     "ENTRY_POINT",
     "NOTES",
+    "OPERATOR_NAMESPACES",
     "ENTRY_POINT_GROUP",
     "ALIASES",
     "PROVIDER_GROUP",
@@ -115,6 +117,14 @@ ALIASES: Mapping[str, str] = {
     "unquantized_fused_moe": "moe.experts_unquantized",
 }
 
+
+#: Namespaces this library serves. ``engine.*`` is deliberately absent: it is the *engine's* ABI
+#: namespace (today: ``engine.moe_method``, the class vLLM instantiates for its OOT MoE path), and
+#: serving it would mean importing the engine here. The platform passes that slot from its own
+#: ``engine/abi/`` - ``ascend_platform/ops/install.py`` says so itself ("the plugin passes
+#: ``{"engine.moe_method": vllm_0_23.moe_method_factory(compute)}``").
+OPERATOR_NAMESPACES = frozenset({"attention", "gdn", "moe", "sampling", "quant"})
+ENGINE_NAMESPACE = "engine."
 
 #: Extra sentences for the descriptor's ``note``, where the target's *shape* is easy to misread.
 #:
@@ -252,6 +262,17 @@ class Provider:
         try:
             entry = entries[platform_name]
         except KeyError:
+            if str(platform_name).startswith(ENGINE_NAMESPACE):
+                # Answer the one question their log actually raises, instead of "not served (19 ops)":
+                # an engine.* slot is engine ABI by definition, and the platform's own abi module is
+                # where it comes from. Returning this as a KeyError keeps their fallback working
+                # (they probe for it), while the text stops the next reader from looking for it here.
+                raise KeyError(
+                    f"{platform_name!r} is in the engine ABI namespace, which an operator library does "
+                    f"not serve: supply it from your engine/abi layer (the platform's install.py passes "
+                    f"{{'{platform_name}': <abi factory>}}). {PROVIDER_NAME} serves "
+                    f"{sorted(entries)}"
+                ) from None
             raise KeyError(
                 f"{platform_name!r} is not provided (or not advertised) by {PROVIDER_NAME}; "
                 f"available: {sorted(entries)}"

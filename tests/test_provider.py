@@ -229,6 +229,30 @@ def test_a_handle_also_offers_the_strict_plan_and_run_path():
     assert expert_ids.numel() >= 1
 
 
+def test_engine_names_are_refused_with_the_place_to_get_them():
+    """``engine.moe_method`` is the platform's ABI slot, and its own install.py passes it from there.
+
+    Their log line for a missing slot is "provider does not serve 'engine.moe_method' (it serves 19
+    op(s))", which sends the reader looking in this repo. The refusal must say where it actually lives.
+    """
+    with pytest.raises(KeyError, match="engine ABI namespace"):
+        provider.load("engine.moe_method")
+    with pytest.raises(KeyError, match="engine/abi"):
+        provider.load("engine.anything")
+
+
+def test_no_advertised_name_is_in_the_engine_namespace():
+    """An operator library that publishes an engine.* name has started importing an engine."""
+    from ascend_attention import provider as provider_module
+
+    served = set(provider_module.descriptor()["ops"])
+    assert not {name for name in served if name.startswith(provider_module.ENGINE_NAMESPACE)}
+    families = {name.split(".", 1)[0] for name in served if "." in name}
+    assert families <= provider_module.OPERATOR_NAMESPACES, sorted(
+        families - provider_module.OPERATOR_NAMESPACES
+    )
+
+
 def test_the_provider_self_check_passes():
     """One call that would have caught both incidents: unnamed op, unresolvable target, dangling alias."""
     provider._self_check()

@@ -74,6 +74,9 @@
    **仍有偏差，且不在本仓**：GDN 的 8 个名字平台仍按 vLLM 符号去问（走它自己的 layout 回退，等它 P1 的
    `requirements.py` 改语义名）；`fused_moe_oot.make_oot_method` 是引擎 ABI，归它的 `engine/abi/`。
 3. **引擎 ABI 适配**：把引擎符号接成本仓算法签名，归平台的 `engine/abi/`（本仓不写，也不该写）。
+   命名空间上是可判定的：本仓只发布 `attention|gdn|moe|sampling|quant`（`provider.OPERATOR_NAMESPACES`），
+   `engine.*` 保留给引擎 ABI，**永不提供**；被问到时返回 `KeyError` 并说明该从 `engine/abi/` 取
+   （`tests/test_provider.py` 钉住这条，且钉住"发布的名字里没有 `engine.*`"）。
 4. **内核化**：MLA 只有 reference（无语义缺口、无加速内核）；fp8 有定义式（`quant.dequant_fp8` /
    `quant.fp8_gemm`）无 fp8 内核，fp4 未实现（格式/block scale/硬件路径无可验证依据）；MoE 计算同上。
    这三条都是"没有加速证据就不写内核"，不是遗忘。

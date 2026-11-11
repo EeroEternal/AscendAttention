@@ -102,7 +102,11 @@ pip install -e ".[dev]"                               # 加 pytest
 2. `unquantized_fused_moe` 的 patch 把本仓**纯数学函数**当成"方法类工厂"用（`subclass = impl(base)`），
    于是报"target vanished between planning and apply"（其实是被当类调了）。这一层适配归它的
    `engine/abi/vllm_0_23.py`；描述符里该 op 的 `note` 已写明"这是数学，不是类工厂"；
-3. `silu_and_mul` 被它的开关置为 off（`1 off by switch`），属它的策略层。
+3. `silu_and_mul` 被它的开关置为 off（`1 off by switch`），属它的策略层；
+4. 它的 `engine.moe_method` 是**引擎 ABI 槽**（vLLM 实例化的那个类），按命名空间就不该由算子库提供——
+   它的 `ops/install.py` 自己也写着"plugin passes `{"engine.moe_method": vllm_0_23.moe_method_factory(compute)}`"。
+   本仓的 `load("engine.*")` 会**明确拒绝并指出该去哪儿取**（`KeyError` + "engine ABI namespace"），
+   而不是回一句"不提供（共 19 个 op）"让人在本仓里找。
 
 ### 明确未实现（写在前面，免得被集成方当成已有能力）
 
