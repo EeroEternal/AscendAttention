@@ -20,6 +20,11 @@ CANN 9.3（`ASCEND_HOME` 指向 TileInfer 的 `.work/cann930`），缓存复用 
 | `paged_prefill_attention` | `tilelang.prefill950` | TileLang 内核 | **否** | — | **未接线**：内核在仓（`paged_prefill_ascend950`），编排是 tile-count 驱动、非 plan-backed；`plan()` 显式 `NotImplementedError` |
 | `moe_slot_layout` | `torch.slot_layout` | torch 组合 | 是 | 1.0（定义性） | [核实] 与 `testing/moe_reference` 的循环写法逐项一致 |
 | `moe_prenz_pack` | `torch.prenz_pack` | torch 组合 | 是 | 1.0（定义性） | [核实] pack→unpack 逐位复原 |
+| `moe_topk_softmax` | `torch.topk_softmax` | torch 组合 | 是（基线） | 1.0（定义性） | [核实] fp64 逐 token 对拍 + 并列按最小 id |
+| `moe_align_block_size` | `torch.align_block_size` | torch 组合 | 是（基线） | 1.0（定义性） | [核实] 与自身循环定义逐项一致 |
+| `moe_silu_and_mul` | `torch.silu_and_mul` | torch 组合 | 是（基线） | 1.0（定义性） | [核实] 定义式逐位（bf16 舍入一致） |
+| `moe_fused_experts` | `torch.fused_experts` | torch 组合 | 是（基线） | 1.0（定义性） | [核实] fp64 逐 token 循环对拍（含 expert_map / 权重前置） |
+| `moe_unquantized_fused_moe` | `torch.unquantized_fused_moe` | torch 组合 | 是（基线） | 1.0（定义性） | [核实] 与 `fused_experts` 同解 |
 | `sampling_topk_threshold` | `torch.topk_threshold` | torch 组合 | 是（基线） | 1.0 | [核实] 与 `mask_top_k_by_logits` 对齐 |
 | `sampling_topk_threshold` | `vendor.deep_select` | vendor_call | **是** | **3.8432**（B=8/V=152064/k=20/bf16，6 对） | [核实] 设备实测；清单里唯一非基线条目 |
 | `sampling_greedy` | `torch.argmax` | torch 组合 | 是 | 1.0（定义性） | [核实] 与 `torch.argmax` 逐位相同 |
@@ -34,6 +39,7 @@ CANN 9.3（`ASCEND_HOME` 指向 TileInfer 的 `.work/cann930`），缓存复用 
 | `gdn_gating_t128.json` | T=128 / H=16，基线校准 | 1.0（定义性；0.019 ms，CPU） |
 | `moe_layout_cpu.json` | slot_layout 0.0878 ms / prenz_pack 0.0433 ms（CPU） | 绝对延迟，无比值（唯一实现） |
 | `sampling_topk_b8.json` | B=8 / V=152064 / k=20 / bf16，vs `torch.topk_threshold` | **3.8432×**（时间比 0.2602，6 对） |
+| `moe_compute_cpu.json` | T=256 / H=1024 / I=512 / E=32 / K=4 / blk=32（CPU） | 绝对延迟：`fused_experts` 12.8 ms、`silu_and_mul` 1.45 ms、`align` 0.124 ms、`topk` 0.109 ms |
 | `sampling_greedy_b8.json` | B=8 / V=152064，argmax 绝对延迟 | 1.0（定义性对等，0.0179 ms，上卡） |
 | `prefill_reference_b4_s4096.json` | B=4 / S=4096，reference 语义 | 绝对延迟，无数值比值 |
 
@@ -51,7 +57,7 @@ op 级与端到端分开记；**端到端没过关的 op 不进默认**。
 
 ## 清单（`src/ascend_attention/manifest.json`）当前内容
 
-平台清单只收「有 `measured_ratio` + `bench` 且默认启用」的实现：现在 **8 条**，其中 7 条是
+平台清单只收「有 `measured_ratio` + `bench` 且默认启用」的实现：现在 **13 条**，其中 12 条是
 `torch` 基线（比值 1.0，含义是"有这个 op、与厂商路径持平"，不是性能声明），1 条是真加速
 （`vendor.deep_select` 3.8432×）。默认关的实现（decode 的两个、conv/chunk_wu 的内核、prefill 内核）
 **不进清单**，但都出现在完整清册里，带 `graph`/`requires`/`note`：

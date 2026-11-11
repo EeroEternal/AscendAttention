@@ -193,6 +193,156 @@
       "form": "torch"
     },
     {
+      "name": "moe_silu_and_mul",
+      "shapes": {
+        "ndim": 2,
+        "dims": [
+          {
+            "min": 1
+          },
+          {
+            "min": 1
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": true,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_moe_compute.py",
+      "impl": "torch.silu_and_mul",
+      "impls": [
+        "torch.silu_and_mul"
+      ],
+      "form": "torch"
+    },
+    {
+      "name": "moe_topk_softmax",
+      "shapes": {
+        "ndim": 2,
+        "dims": [
+          {
+            "min": 1
+          },
+          {
+            "min": 1
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": true,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_moe_compute.py",
+      "impl": "torch.topk_softmax",
+      "impls": [
+        "torch.topk_softmax"
+      ],
+      "form": "torch"
+    },
+    {
+      "name": "moe_align_block_size",
+      "shapes": {
+        "ndim": 2,
+        "dims": [
+          {
+            "min": 1
+          },
+          {
+            "min": 1
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": true,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_moe_compute.py",
+      "impl": "torch.align_block_size",
+      "impls": [
+        "torch.align_block_size"
+      ],
+      "form": "torch"
+    },
+    {
+      "name": "moe_fused_experts",
+      "shapes": {
+        "ndim": 2,
+        "dims": [
+          {
+            "min": 1
+          },
+          {
+            "min": 1
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": true,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_moe_compute.py",
+      "impl": "torch.fused_experts",
+      "impls": [
+        "torch.fused_experts"
+      ],
+      "form": "torch"
+    },
+    {
+      "name": "moe_unquantized_fused_moe",
+      "shapes": {
+        "ndim": 2,
+        "dims": [
+          {
+            "min": 1
+          },
+          {
+            "min": 1
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": true,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_moe_compute.py",
+      "impl": "torch.unquantized_fused_moe",
+      "impls": [
+        "torch.unquantized_fused_moe"
+      ],
+      "form": "torch"
+    },
+    {
       "name": "sampling_topk_threshold",
       "shapes": {
         "ndim": 2,

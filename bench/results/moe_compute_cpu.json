@@ -1,0 +1,40 @@
+{
+  "op": "moe_compute",
+  "shape": {
+    "tokens": 256,
+    "hidden": 1024,
+    "inter": 512,
+    "experts": 32,
+    "top_k": 4,
+    "block_size": 32
+  },
+  "dtype": "float32",
+  "device": "cpu",
+  "measured_ratio": 1.0,
+  "ratio_note": "definitional 1.0: each op has exactly one implementation here, so there is nothing to compare against; these are absolute latencies for a future kernel to beat",
+  "ms": {
+    "silu_and_mul": {
+      "median_ms": 1.4169,
+      "min_ms": 1.4113
+    },
+    "topk_softmax": {
+      "median_ms": 0.1103,
+      "min_ms": 0.0887
+    },
+    "moe_align_block_size": {
+      "median_ms": 0.1227,
+      "min_ms": 0.1205
+    },
+    "fused_experts": {
+      "median_ms": 12.7725,
+      "min_ms": 12.6982
+    },
+    "unquantized_fused_moe": {
+      "median_ms": 14.4512,
+      "min_ms": 14.1198
+    }
+  },
+  "command": "bench/bench_moe_compute.py --device cpu --tokens 256",
+  "host": "tileinfer-102",
+  "date": "2026-11-11T11:05:40+0800"
+}

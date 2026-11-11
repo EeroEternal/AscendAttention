@@ -44,13 +44,24 @@ def test_the_readme_does_not_advertise_an_op_that_does_not_exist():
 
 
 def test_unimplemented_features_are_labelled():
-    """The three that were over-claimed before must carry an explicit 'not implemented' marker."""
+    """Every capability this README talks about must say whether it exists.
+
+    Two rounds of history are pinned here.  The first three were over-claimed once (routing/expert
+    compute, top-p sampling, the AscendC form) and the labels are what stopped the repeat.  The last
+    three come from the boundary review: MLA and quantisation were filed under "platform" (they are
+    operators, and they are not written yet), and the engine adapter was described as "not done
+    because it would break the zero-vllm rule" -- it is not ours to write at all, so the note has to
+    say *whose* it is.  A README that drops any of these six sentences is advertising again.
+    """
     text = _text()
     for phrase, marker in [
-        ("路由与专家计算", "未实现"),
+        ("MoE 的内核化", "未实现"),
         ("top-p", "未实现"),
         ("AscendC", "未实现"),
-        ("vLLM 适配器", "未实现"),
+        ("引擎适配不在本仓", "平台"),
+        ("MLA", "未实现"),
+        ("量化", "未实现"),
+        ("供给契约的代码侧尚未定稿", "platform_name"),
     ]:
         assert phrase in text, f"README lost the note about {phrase!r}"
         window = text[text.index(phrase) : text.index(phrase) + 220]

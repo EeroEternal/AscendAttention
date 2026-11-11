@@ -14,7 +14,7 @@
 | D5 | `graph` 三档 | ✅ | `spec.GRAPHS`；三档各有实证：`capture_safe` = decode 内核（guard 0 回读 + `NPUGraph` capture/replay 逐位相同），`eager_only` = conv 基线（guard 抓到 `_to_copy` 回读），`unknown` = 910B fork（不宣称） |
 | D6 | 只给源码 + `prewarm()` 纯函数 | ✅ | `ascend_attention.prewarm()`（本轮新增，去重排序、不编译）；无预编译产物 |
 | D7 | 只允许 `ASCEND_ATTN_*` | ✅（前缀统一 + 单一入口） | 内核里现已**零** `os.environ`：7 处读取全部走 `utils.kernel_flag()`（唯一入口、只读 `ASCEND_ATTN_*`、首次使用打一条 warning），flag 名字由 AST ratchet 钉死。**仍待办**：把它们变成显式编译规格参数（`docs/completion-audit.md` 的缺口 6） |
-| D8 | 负结果归档 | ✅ | `docs/archive-moe.md`、`docs/archive-sampling.md`、`docs/archive-attention.md`、`docs/status.md` |
+| D8 | 负结果归档 | ✅（边界复盘后追加 `docs/boundary.md`） | `docs/archive-moe.md`、`docs/archive-sampling.md`、`docs/archive-attention.md`、`docs/status.md` |
 
 ## P0 验收
 
@@ -51,6 +51,7 @@
 | 条款 | 状态 | 证据 |
 |---|---|---|
 | MoE manifest 至少一个 torch 实现跑通两种专家分布 | ✅ | `tests/test_moe_ops.py`（均衡 + 单专家热点 + 空专家） |
+| **MoE 计算归属本仓**（边界复盘后的补做） | ✅ 新增 | 五个纯 torch 基线：`moe_topk_softmax` / `moe_align_block_size` / `moe_silu_and_mul` / `moe_fused_experts` / `moe_unquantized_fused_moe`。`tests/test_moe_compute.py`（21 项，fp64 逐 token 对拍 + 并列/空专家/expert_map/quant 拒绝），`tests/test_platform_requirements.py` 断言平台 13 个必需名字 **13/13** 落在本仓且与平台列表完全相等。理由与归属表见 `docs/boundary.md` |
 | slot 哨兵语义（`sorted_ids == rows_static` 表示空 tile）有契约测试 | ✅ | 同上，并给出"compact→slot 映射"与独立实现的逐项比对 |
 | 未接入的高性能候选显示 `enabled_by_default=False` 且 note 可读 | ✅ | `grouped_gemm`/`down_prenz` 未注册（归档）；`moe_prenz_pack` 的 note 写明等价关系 |
 
