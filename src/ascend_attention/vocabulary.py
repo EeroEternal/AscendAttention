@@ -29,6 +29,7 @@ PLATFORM_NAMES: Mapping[str, str] = {
     # attention
     "paged_decode_attention": "attention.paged_decode",
     "paged_prefill_attention": "attention.paged_prefill",
+    "mla_decode_attention": "attention.mla_decode",
     # gated delta net
     "gdn_gating": "gdn.gating",
     "gdn_conv_update": "gdn.conv_update",

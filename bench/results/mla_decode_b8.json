@@ -1,0 +1,25 @@
+{
+  "op": "mla_decode_attention",
+  "impl": "torch.reference",
+  "shape": {
+    "batch": 8,
+    "heads": 128,
+    "latent": 512,
+    "rope": 64,
+    "kv_len": 2048,
+    "page_size": 128
+  },
+  "dtype": "float32",
+  "device": "cpu",
+  "measured_ratio": 1.0,
+  "ratio_note": "definitional 1.0: the only implementation and a per-request Python loop; recorded so that 'implemented' is not read as 'fast'",
+  "ms": {
+    "mla_decode": {
+      "median_ms": 15.7914,
+      "min_ms": 15.4284
+    }
+  },
+  "command": "bench/bench_mla_decode.py --device cpu --batch 8",
+  "host": "tileinfer-102",
+  "date": "2026-11-11T11:46:30+0800"
+}

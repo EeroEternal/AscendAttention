@@ -55,15 +55,15 @@ def test_unimplemented_features_are_labelled():
     """
     text = _text()
     for phrase, marker in [
-        ("MoE 的内核化", "未实现"),
+        ("MoE 的内核化", "没有加速内核"),
         ("AscendC", "未实现"),
         ("引擎适配不在本仓", "平台"),
-        ("MLA", "未实现"),
+        ("MLA 内核", "没有加速内核"),
         ("量化（fp8/fp4）", "未实现"),
-        ("供给契约的代码侧尚未定稿", "platform_name"),
+        ("供给契约两仓都已落地", "实测 10 绑定"),
     ]:
         assert phrase in text, f"README lost the note about {phrase!r}"
-        window = text[text.index(phrase) : text.index(phrase) + 220]
+        window = text[text.index(phrase) : text.index(phrase) + 320]
         assert marker in window, f"{phrase!r} is claimed without a {marker!r} marker nearby"
 
 

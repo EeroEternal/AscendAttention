@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 __all__ = [
+    "mla_decode",
     "gdn_chunk_wu",
     "gdn_conv_update",
     "gdn_gating",
@@ -206,3 +207,30 @@ def _plan(op: str, pure: dict, impl: Optional[str]) -> Any:
 
     return plan(op, impl=impl, **pure)
 
+
+
+def mla_decode(
+    q_nope: Any,
+    q_pe: Any,
+    c_kv: Any,
+    k_pe: Any,
+    *,
+    num_heads: int,
+    kv_indptr: Any,
+    kv_indices: Any,
+    kv_last_page_len: Any,
+    sm_scale: Optional[float] = None,
+    impl: Optional[str] = None,
+) -> Any:
+    """Plan and run one MLA decode step over a paged compressed cache (returns the latent output)."""
+    pure = dict(
+        num_heads=num_heads,
+        kv_indptr=kv_indptr,
+        kv_indices=kv_indices,
+        kv_last_page_len=kv_last_page_len,
+        c_kv=c_kv,
+        k_pe=k_pe,
+    )
+    if sm_scale is not None:
+        pure["sm_scale"] = sm_scale
+    return _plan_then_run("mla_decode_attention", pure, impl, q_nope, q_pe)

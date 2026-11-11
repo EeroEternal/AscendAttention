@@ -40,8 +40,9 @@ pip install -e ".[dev]"                               # 加 pytest
 
 ## 仓库功能
 
-- **注意力**：paged decode（GQA、head_dim 128/256、NHD 池、分页表）与 paged prefill（reference 语义 + fp64 oracle；
-  prefill 内核在仓，tile-count 编排属平台侧，未接线）
+- **注意力**：paged decode（GQA、head_dim 128/256、NHD 池、分页表）、paged prefill（reference 语义 + fp64 oracle；
+  prefill 内核在仓，tile-count 编排属平台侧，未接线）、**MLA decode**（压缩 latent + 解耦 RoPE 的分页缓存，
+  reference 语义 + fp64 定义式取证）
 - **线性注意力（GDN）**：卷积更新、门控、分块递推 chunk 链、权重整形
 - **MoE**：路由 top-k（`moe_topk_softmax`）、块对齐（`moe_align_block_size`）、SwiGLU
   （`moe_silu_and_mul`）、非量化专家计算（`moe_fused_experts` / `moe_unquantized_fused_moe`）
@@ -72,9 +73,10 @@ pip install -e ".[dev]"                               # 加 pytest
 | `sampling_topk_threshold` | `sampling.topk_threshold` | `torch.topk_threshold`、`vendor.deep_select`（**3.8432×**，唯一默认开启的非基线条目） | 两者都是 |
 | `sampling_top_p` | `sampling.top_p` | `torch.top_p`（13.55 ms @ B=8/V=152064/p=0.9，CPU） | 是（基线） |
 | `sampling_min_p` | `sampling.min_p` | `torch.min_p`（**0.93 ms** 同形状——无排序，所以快 14.5×） | 是（基线） |
+| `mla_decode_attention` | `attention.mla_decode` | `torch.reference`（15.79 ms @ B=8/H=128/D_c=512/D_r=64/KV=2048，CPU） | 是（基线） |
 | `sampling_greedy` | `sampling.greedy` | `torch.argmax` | 是 |
 
-`manifest.json` 只收"有实测比值且默认启用"的实现（16 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
+`manifest.json` 只收"有实测比值且默认启用"的实现（17 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
 两者的分工见 `docs/contracts/exposure.md`。
 
 平台按**语义名**（第二列）绑定，不按本仓的 op 名。本仓这一半已就位并经过跨仓实测：
@@ -102,7 +104,9 @@ pip install -e ".[dev]"                               # 加 pytest
 
 - **MoE 的内核化**：计算已是纯 torch 基线（正确性有 fp64 定义式取证），但**没有加速内核**；
   `grouped_gemm` 0.86×、`prenz` 直吃、`align_*` 未达门槛都只归档，理由见 `docs/archive-moe.md`。
-- **MLA**、**量化（fp8/fp4）算子**：属本仓的算子面，未实现。
+- **MLA 内核**：语义与 reference 已落地（`mla_decode_attention`，含 fp64 定义式 oracle），但**没有加速内核**，
+  也没有 MLA 的 prefill 形态（引擎把一个 prefill 拆成 decode 步即可用现在这条）。
+- **量化（fp8/fp4）算子**：属本仓的算子面，未实现。
 - **prefill 编排接线**：内核在仓，tile-count 编排属平台侧，尚未接上。
 
 ## 解耦设计
@@ -124,9 +128,10 @@ pip install -e ".[dev]"                               # 加 pytest
 - **引擎适配不在本仓**：把引擎的算子符号接到本仓算子上，是平台的 `engine/abi/` 的职责。本仓提供的是
   算法签名，不是引擎 ABI；两者形状相似只是因为引擎也按算法调（例如
   `fused_sigmoid_gating_delta_rule_update` 是 FLA 的签名，引擎只是按关键字调用同名函数）
-- **供给契约的代码侧尚未定稿**：语义算子名词表、`platform_name` 字段、provider 发现入口要两仓一起定
-  （平台先有 `contracts/provider.py` 与描述符 schema 的第二版），在那之前本仓不单方面加字段——
-  加一个没人读的字段只会让清单看起来比实际更契约化
+- **供给契约两仓都已落地**：语义算子名词表（`vocabulary.py`，`family.member` 格式，每个 op 一个名）、
+  manifest 里的 `platform_name` 字段、`ascend_platform.providers` entry point 与描述符
+  （`provider.py`）都在本仓；平台的 `contracts/provider.py` 读同一份形状。**契约的判定标准是跑对方的代码**：
+  `install_ops()` 实测 10 绑定 / 2 未绑定 / 1 开关关闭（见上文），不是"文档里对过一次"
 
 ## 支持的组合
 
@@ -136,7 +141,7 @@ pip install -e ".[dev]"                               # 加 pytest
 
 设备语义、KV 分配、批元数据、图捕获、worker、多卡通信、引擎适配——这些属于平台层。
 
-注意区分：**MLA 与量化是算子**（属本仓，未实现），不是平台语义。把"MoE 路由/专家计算"写进
+注意区分：**MLA 与量化是算子**（属本仓；MLA 已有 reference，量化的计算未实现），不是平台语义。把"MoE 路由/专家计算"写进
 "平台层"曾让一条真实计算路径无人认领——复盘与两仓修复清单在平台仓的 `docs/notes/repo-boundary.md`（跨仓文，不在本仓）。
 
 ## 状态

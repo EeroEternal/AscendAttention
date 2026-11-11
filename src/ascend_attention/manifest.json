@@ -142,6 +142,46 @@
       "form": "torch"
     },
     {
+      "name": "mla_decode_attention",
+      "platform_name": "attention.mla_decode",
+      "shapes": {
+        "ndim": 4,
+        "dims": [
+          {
+            "min": 1
+          },
+          {
+            "min": 1
+          },
+          1,
+          {
+            "in": [
+              128,
+              256,
+              512,
+              576
+            ]
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": false,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_mla_decode.py",
+      "impl": "torch.reference",
+      "impls": [
+        "torch.reference"
+      ],
+      "form": "torch"
+    },
+    {
       "name": "moe_slot_layout",
       "platform_name": "moe.slot_layout",
       "shapes": {
