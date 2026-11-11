@@ -1,0 +1,24 @@
+# Exact versions of the reference box (`tileinfer-102`, Ascend950PR_9579) this library is verified on.
+#
+# Two different things live in pyproject.toml, on purpose:
+#   * `dependencies` = the *contract*: what a stranger needs for `import ascend_attention`, which is
+#     torch only, with a floor rather than an exact pin so the library stays installable elsewhere;
+#   * this file = the *evidence*: the versions every number in bench/results/ was measured with.
+#
+# Install them with:
+#     pip install -c constraints.txt -e ".[npu,tilelang]"
+#
+# Do not "helpfully" upgrade one of these inside a benchmark run: a torch_npu or tilelang bump changes
+# codegen, so a ratio measured after it is not comparable with the committed ledger (docs/perf-rules.md).
+#
+# CANN is not a pip package; the reference box has CANN 9.3 at $ASCEND_HOME_PATH
+# (/home/dlb/Ascend/install/cann-9.3.0). torch_npu refuses to run against a different major version.
+
+torch==2.13.0
+torch-npu==2.13.0rc1
+tilelang==0.1.15
+numpy==2.3.5
+
+# test-and-tools only
+pytest==9.1.1
+setuptools==84.0.0

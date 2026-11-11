@@ -21,14 +21,18 @@ dynamic = ["version"]
 # The library itself needs only torch: capability query, planning and the pure-torch baselines are
 # host-side.  The NPU runtime and the TileLang toolchain are extras, because the contract is
 # "no NPU, no toolchain, still importable and still able to explain what is missing".
-# Pinned to the versions the reference box runs (torch 2.13 / torch_npu 2.13 / tilelang 0.1.15 /
-# CANN 9.3) so a local install cannot silently drift from TileInfer or AscendPlatform.
+# The floor, not the pin: this must stay installable on a machine that is not ours.  The *exact* set every
+# committed number was measured with lives in `constraints.txt` (torch 2.13.0+cpu / torch_npu 2.13.0rc1 /
+# tilelang 0.1.15 / CANN 9.3), and `pip install -c constraints.txt ...` is the supported way to reproduce
+# the reference box.  `tests/test_pyproject.py` keeps the two files honest.
 dependencies = ["torch>=2.5"]
 
 [project.optional-dependencies]
 npu = ["torch_npu>=2.5"]
 tilelang = ["tilelang>=0.1.15"]
 dev = ["pytest>=7"]
+# Convenience: the exact reference set, for a machine that is allowed to install pinned wheels.
+pinned = ["torch==2.13.0", "torch-npu==2.13.0rc1", "tilelang==0.1.15"]
 # The platform repo is a consumer, never a dependency: this extra only exists for the cross-repo
 # manifest contract test, and it is deliberately not installable from this package.
 dev-platform = []
@@ -45,6 +49,11 @@ include = ["ascend_attention*"]
 
 [tool.setuptools.package-data]
 ascend_attention = ["manifest.json"]
+
+[tool.setuptools.data-files]
+# Ship the pin next to the wheel's metadata: `pip install -c constraints.txt` needs the file, and a wheel
+# that does not carry it makes the numbers unreproducible for anyone who installed rather than cloned.
+"share/ascend-attention" = ["constraints.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
