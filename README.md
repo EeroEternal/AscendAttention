@@ -41,8 +41,7 @@ pip install -e ".[dev]"                               # 加 pytest
 ## 仓库功能
 
 - **注意力**：paged decode（GQA、head_dim 128/256、NHD 池、分页表）、paged prefill（reference 语义 + fp64 oracle；
-  prefill 内核在仓，按**单步 plan**接线：schedule 就是这一步的 tile 数，故默认关）、**MLA decode**（压缩 latent + 解耦 RoPE 的分页缓存，
-  reference 语义 + fp64 定义式取证）
+  prefill 内核在仓，按**单步 plan**接线：schedule 就是这一步的 tile 数，故默认关）
 - **线性注意力（GDN）**：卷积更新、门控、分块递推 chunk 链、权重整形
 - **MoE**：路由 top-k（`moe_topk_softmax`）、块对齐（`moe_align_block_size`）、SwiGLU
   （`moe_silu_and_mul`）、非量化专家计算（`moe_fused_experts` / `moe_unquantized_fused_moe`）
@@ -77,10 +76,9 @@ pip install -e ".[dev]"                               # 加 pytest
 | `sampling_min_p` | `sampling.min_p` | `torch.min_p`（**0.93 ms** 同形状——无排序，所以快 14.5×） | 是（基线） |
 | `quant_dequant_fp8` | `quant.dequant_fp8` | `torch.fake_quant`（42.13 ms @ 4096×7168，CPU） | 是（基线） |
 | `quant_fp8_gemm` | `quant.fp8_gemm` | `torch.dequant_gemm`（9.87 ms @ 1024×4096×1024，CPU） | 是（基线） |
-| `mla_decode_attention` | `attention.mla_decode` | `torch.reference`（15.79 ms @ B=8/H=128/D_c=512/D_r=64/KV=2048，CPU） | 是（基线） |
 | `sampling_greedy` | `sampling.greedy` | `torch.argmax` | 是 |
 
-`manifest.json` 只收"有实测比值且默认启用"的实现（18 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
+`manifest.json` 只收"有实测比值且默认启用"的实现（17 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
 两者的分工见 `docs/contracts/exposure.md`。
 
 平台按**语义名**（第二列）绑定，不按本仓的 op 名。本仓这一半已就位并经过跨仓实测：
@@ -112,8 +110,8 @@ pip install -e ".[dev]"                               # 加 pytest
 
 - **MoE 的内核化**：计算已是纯 torch 基线（正确性有 fp64 定义式取证），但**没有加速内核**；
   `grouped_gemm` 0.86×、`prenz` 直吃、`align_*` 未达门槛都只归档，理由见 `docs/archive-moe.md`。
-- **MLA 内核**：语义与 reference 已落地（`mla_decode_attention`，含 fp64 定义式 oracle），但**没有加速内核**，
-  也没有 MLA 的 prefill 形态（引擎把一个 prefill 拆成 decode 步即可用现在这条）。
+- **MLA**：**不做**。目标模型 Qwen3.6-35B-A3B 是 GQA（16 Q / 2 KV，head_dim 256）+ GDN 线性注意力 + MoE 的混合架构，
+  没有 latent 注意力层；MLA 是 DeepSeek 系的路径，写它属于偏离目标的扩张（本轮曾实现过一份，已整体撤掉）。
 - **量化的加速内核**：fp8 的**定义式**已落地（`quant.dequant_fp8` / `quant.fp8_gemm`，含饱和、
   scale 轴、折叠等价三处取证），但**没有 fp8 计算内核**；**fp4 未实现**（格式、block scale、
   硬件路径都没有可验证的依据，不写猜的）。
@@ -155,7 +153,7 @@ pip install -e ".[dev]"                               # 加 pytest
 
 设备语义、KV 分配、批元数据、图捕获、worker、多卡通信、引擎适配——这些属于平台层。
 
-注意区分：**MLA 与量化是算子**（属本仓；MLA 已有 reference，量化的计算未实现），不是平台语义。把"MoE 路由/专家计算"写进
+注意区分：**MLA 与量化是算子**（属本仓；两者都不在 Qwen3.6 的目标路径上，MLA 不做、量化只有定义式），不是平台语义。把"MoE 路由/专家计算"写进
 "平台层"曾让一条真实计算路径无人认领——复盘与两仓修复清单在平台仓的 `docs/notes/repo-boundary.md`（跨仓文，不在本仓）。
 
 ## 状态

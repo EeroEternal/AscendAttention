@@ -253,6 +253,45 @@ def test_no_advertised_name_is_in_the_engine_namespace():
     )
 
 
+def test_the_functional_signatures_the_engine_adapter_depends_on():
+    """The platform's ABI adapter calls these positionally; a signature change must fail here.
+
+    Pinned because the adapter lives in the other repo and cannot see this one: if ``topk_softmax``
+    grows a positional argument, their call site silently passes the wrong tensor. The arities below are
+    the contract the e2e run was verified against (docs/e2e-qwen36.md).
+    """
+    import inspect
+
+    from ascend_attention.ops.moe import compute
+
+    def positional(fn):
+        return [
+            name
+            for name, param in inspect.signature(fn).parameters.items()
+            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD)
+        ]
+
+    assert positional(compute.topk_softmax) == ["scores", "top_k"]
+    assert positional(compute.moe_align_block_size) == ["topk_ids", "num_experts", "block_size"]
+    # the engine's MoE method object calls this with exactly these five positional arguments plus
+    # keyword options (``activation``/``apply_router_weight_on_input``/``global_num_experts``/
+    # ``expert_map``/``quant_config``) - see their ``_MoEKernel.apply``
+    assert positional(compute.fused_experts)[:5] == [
+        "hidden_states",
+        "w1",
+        "w2",
+        "topk_weights",
+        "topk_ids",
+    ]
+    assert positional(compute.unquantized_fused_moe) == [
+        "hidden_states",
+        "w1",
+        "w2",
+        "topk_weights",
+        "topk_ids",
+    ], "num_experts must stay keyword-only: the engine passes five positionals"
+
+
 def test_the_provider_self_check_passes():
     """One call that would have caught both incidents: unnamed op, unresolvable target, dangling alias."""
     provider._self_check()

@@ -29,7 +29,6 @@ CANN 9.3（`ASCEND_HOME` 指向 TileInfer 的 `.work/cann930`），缓存复用 
 | `sampling_topk_threshold` | `vendor.deep_select` | vendor_call | **是** | **3.8432**（B=8/V=152064/k=20/bf16，6 对） | [核实] 设备实测；清单里唯一非基线条目 |
 | `quant_dequant_fp8` | `torch.fake_quant` | 纯 torch | 是（基线） | 1.0（定义性） | [核实] 饱和边界、scale 轴校验、fp8 网格幂等、bf16 不提精度 |
 | `quant_fp8_gemm` | `torch.dequant_gemm` | 反量化 + matmul | 是（基线） | 1.0（定义性） | [核实] 对 fp64 定义式一致；"先反量化再乘"与"先乘再折叠 scale"在正确轴上等价 |
-| `mla_decode_attention` | `torch.reference` | 纯 torch 循环 | 是（基线） | 1.0（定义性） | [核实] 对 fp64 逐请求/逐头定义式一致；含"部分页尾部不参与""零长请求返回 0 不返回 nan" |
 | `sampling_min_p` | `torch.min_p` | torch 组合 | 是（基线） | 1.0（定义性） | [核实] 与独立定义逐 mask 一致；含"恰好等于下限"的边界用例 |
 | `sampling_top_p` | `torch.top_p` | torch 组合 | 是（基线） | 1.0（定义性） | [核实] 与独立前缀式定义逐 mask 一致（p∈{0.1,0.5,0.9,0.99}） |
 | `sampling_greedy` | `torch.argmax` | torch 组合 | 是 | 1.0（定义性） | [核实] 与 `torch.argmax` 逐位相同 |
@@ -62,7 +61,7 @@ op 级与端到端分开记；**端到端没过关的 op 不进默认**。
 
 ## 清单（`src/ascend_attention/manifest.json`）当前内容
 
-平台清单只收「有 `measured_ratio` + `bench` 且默认启用」的实现：现在 **18 条**，其中 12 条是
+平台清单只收「有 `measured_ratio` + `bench` 且默认启用」的实现：现在 **17 条**，其中 12 条是
 `torch` 基线（比值 1.0，含义是"有这个 op、与厂商路径持平"，不是性能声明），1 条是真加速
 （`vendor.deep_select` 3.8432×）。默认关的实现（decode 的两个、conv/chunk_wu 的内核、prefill 内核）
 **不进清单**，但都出现在完整清册里，带 `graph`/`requires`/`note`：
