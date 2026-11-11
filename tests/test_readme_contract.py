@@ -59,7 +59,8 @@ def test_unimplemented_features_are_labelled():
         ("AscendC", "未实现"),
         ("引擎适配不在本仓", "平台"),
         ("MLA 内核", "没有加速内核"),
-        ("量化（fp8/fp4）", "未实现"),
+        ("量化的加速内核", "没有 fp8 计算内核"),
+        ("fp4 未实现", "未实现"),
         ("供给契约两仓都已落地", "实测 10 绑定"),
     ]:
         assert phrase in text, f"README lost the note about {phrase!r}"

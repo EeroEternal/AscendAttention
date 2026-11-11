@@ -85,6 +85,8 @@ ENTRY_POINT = "ascend_attention.provider:provider"
 TARGETS: Mapping[str, str] = {
     "attention.paged_prefill": "ascend_attention.entry:paged_prefill",
     "attention.mla_decode": "ascend_attention.entry:mla_decode",
+    "quant.dequant_fp8": "ascend_attention.ops.quant:quant_dequant",
+    "quant.fp8_gemm": "ascend_attention.ops.quant:fp8_gemm_reference",
     "gdn.gating": "ascend_attention.entry:gdn_gating",
     "gdn.conv_update": "ascend_attention.entry:gdn_conv_update",
     "gdn.chunk_wu": "ascend_attention.entry:gdn_chunk_wu",
