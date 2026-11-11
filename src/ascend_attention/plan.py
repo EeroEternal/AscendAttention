@@ -672,12 +672,15 @@ class OpPlan:
     #: The one callable that turns tensors into tensors.
     execute: Optional[Any] = field(default=None, repr=False)
 
-    def __call__(self, *tensors: Any) -> Any:
+    def __call__(self, *tensors: Any, **kwargs: Any) -> Any:
+        # ``**kwargs`` is not decoration: several runners forward an optional argument (``run_gating``
+        # passes ``beta``/``threshold``, ``run_conv`` passes ``out``), so a plan that dropped them
+        # raised TypeError at the call site - a bug in the plan, not in the runner.
         if self.execute is None:
             raise RuntimeError(
                 f"{self.op}/{self.impl}: plan has no executor (planner returned data only)"
             )
-        return self.execute(*tensors)
+        return self.execute(*tensors, **kwargs)
 
     def spec_key(self) -> str:
         """The cache key for a compiled artifact: every dimension that can change the code."""

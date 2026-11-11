@@ -75,7 +75,7 @@ def test_vendor_impl_is_enabled_only_on_its_own_device():
     assert TOP_THRESHOLD_VENDOR.form == "vendor_call"
     assert "deep_select" in TOP_THRESHOLD_VENDOR.requires
     # on this machine the gate either rejects it (no 950) or the vendor lib is absent; both are fine
-    from ascend_attention import describe
+    from ascend_attention import describe_op as describe
 
     decision = describe("sampling_topk_threshold")
     assert decision["impls"][0]["impl"] == "torch.topk_threshold"

@@ -72,6 +72,33 @@ def test_the_mapping_covers_every_name_the_platform_requires():
     )
 
 
+def test_the_platform_resolver_returns_our_functions_for_the_semantic_keys_it_asks():
+    """The strongest form of this test: ask the way *their* table asks, and get *our* callable back.
+
+    Their resolver tries the provider first (by the key written in ``gdn_moe.py``) and falls back to the
+    layout path. Pinning the returned object - not just "something resolved" - is what catches a rename on
+    either side: a fallback that happens to import the same function under the old layout would look
+    identical in a "did it bind?" test and different here.
+    """
+    try:
+        from ascend_platform.ops.families.gdn_moe import _Impl
+    except Exception:  # pragma: no cover - platform not installed
+        pytest.skip("AscendPlatform is not importable; the cross-repo half cannot be checked here")
+
+    import ascend_attention.ops.moe.compute as compute
+
+    resolver = _Impl()
+    for key, target, function in [
+        ("moe.routing_topk_softmax", "topk_softmax", compute.topk_softmax),
+        ("moe.align_block_size", "moe_align_block_size", compute.moe_align_block_size),
+        ("moe.experts", "fused_experts", compute.fused_experts),
+        ("moe.swiglu_gate", "silu_and_mul", compute.silu_and_mul),
+        ("unquantized_fused_moe", "unquantized_fused_moe", compute.unquantized_fused_moe),
+    ]:
+        value, note = resolver.impl(key, "moe", target)
+        assert value is function, f"{key}: got {value!r} ({note})"
+
+
 def test_the_mapping_itself_is_free_of_engine_imports():
     """The mapping is a *name* table, not an import of the engine: a target must be ours."""
     for name, target in REQUIRED_TO_TARGET.items():

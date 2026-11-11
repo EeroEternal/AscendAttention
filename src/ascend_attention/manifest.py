@@ -33,7 +33,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-from . import dispatch
+from . import dispatch, vocabulary
 from ._version import __version__
 from .spec import REGISTRY, ImplSpec, OpEntry
 
@@ -85,6 +85,7 @@ MANIFEST_SCHEMA: Dict[str, Any] = {
                     "graph_capturable",
                     "measured_ratio",
                     "bench",
+                    "platform_name",
                 ],
                 "properties": {
                     "name": {"type": "string"},
@@ -94,6 +95,7 @@ MANIFEST_SCHEMA: Dict[str, Any] = {
                     "graph_capturable": {"type": "boolean"},
                     "measured_ratio": {"type": "number", "exclusiveMinimum": 0},
                     "bench": {"type": "string"},
+                    "platform_name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"},
                     "impl": {"type": "string"},
                     "impls": {"type": "array", "items": {"type": "string"}},
                     "form": {"type": "string"},
@@ -156,8 +158,16 @@ def _entry(entry: OpEntry) -> Dict[str, Any]:
     decision = dispatch.select(entry)
     primary = decision.impl if decision.impl in impls else impls[0]
     ratio = max(float(i.measured_ratio) for i in impls)
+    try:
+        semantic = vocabulary.platform_name(entry.name)
+    except KeyError as exc:
+        raise ValueError(
+            f"{entry.name}: {exc.args[0]} (see docs/contracts/exposure.md; the platform binds by "
+            "semantic name, so an unnamed op cannot be advertised)"
+        ) from None
     return {
         "name": entry.name,
+        "platform_name": semantic,
         "shapes": _shapes(primary),
         "dtypes": _dtypes(impls),
         "kv_layouts": _layouts(impls),

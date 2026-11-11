@@ -60,7 +60,12 @@
 
 1. **MoE 计算的内核化**：现在全是 torch。`grouped_gemm` 0.86×、`prenz` 直吃、`align_*` 未达门槛
    仍是归档状态（`docs/archive-moe.md`），没有新的加速证据。
-2. **供给契约的代码侧**：语义算子名词表、描述符里的 `platform_name`、provider 发现入口——这三件
-   要两仓一起定。平台侧先要有 `contracts/provider.py` 与描述符 schema 第二版；在那之前本仓单方面加
-   字段，只会让清单"看起来契约化"而没人读。
+2. **供给契约**：**两侧都已落地，并已跨仓实测**。本仓：`vocabulary.py` 的语义名、`manifest.json` 每条
+   op 的 `platform_name`（schema required）、`pyproject.toml` 的 `ascend_platform.providers` entry
+   point、包根 `describe()`、`provider.py` 的工厂（描述符 + `load(语义名)`）。平台：`contracts/provider.py`
+   （它自己的 `PROVIDER_GROUP`，与本仓常量由 `tests/test_provider.py` 钉成相等）。
+   实测结果：5 个 MoE 名字 5/5 经 provider 绑定成功；`unquantized_fused_moe` 这个它旧表里的键由本仓
+   `ALIASES` 兼容（`alias_of`），等它的语义词表落地后删。
+   **仍有偏差，且不在本仓**：GDN 的 8 个名字平台仍按 vLLM 符号去问（走它自己的 layout 回退，等它 P1 的
+   `requirements.py` 改语义名）；`fused_moe_oot.make_oot_method` 是引擎 ABI，归它的 `engine/abi/`。
 3. **引擎 ABI 适配**：把引擎符号接成本仓算法签名，归平台的 `engine/abi/`（本仓不写，也不该写）。

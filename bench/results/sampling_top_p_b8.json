@@ -1,0 +1,23 @@
+{
+  "op": "sampling_top_p",
+  "impl": "torch.top_p",
+  "shape": {
+    "batch": 8,
+    "vocab": 152064,
+    "p": 0.9
+  },
+  "dtype": "float32",
+  "device": "cpu",
+  "measured_ratio": 1.0,
+  "ratio_note": "definitional 1.0: the only implementation; the number is the absolute cost of a full-vocabulary sort + cumsum that a nucleus kernel would have to beat",
+  "survivors_median": 92934,
+  "ms": {
+    "top_p": {
+      "median_ms": 13.5521,
+      "min_ms": 12.6444
+    }
+  },
+  "command": "bench/bench_sampling_top_p.py --device cpu --batch 8",
+  "host": "tileinfer-102",
+  "date": "2026-11-11T11:20:55+0800"
+}

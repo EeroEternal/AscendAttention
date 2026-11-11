@@ -8,6 +8,7 @@
   "ops": [
     {
       "name": "paged_prefill_attention",
+      "platform_name": "attention.paged_prefill",
       "shapes": {
         "ndim": 4,
         "dims": [
@@ -51,6 +52,7 @@
     },
     {
       "name": "gdn_gating",
+      "platform_name": "gdn.gating",
       "shapes": {
         "ndim": 2,
         "dims": [
@@ -79,6 +81,7 @@
     },
     {
       "name": "gdn_conv_update",
+      "platform_name": "gdn.conv_update",
       "shapes": {
         "ndim": 1,
         "dims": [
@@ -104,6 +107,7 @@
     },
     {
       "name": "gdn_chunk_wu",
+      "platform_name": "gdn.chunk_wu",
       "shapes": {
         "ndim": 3,
         "dims": [
@@ -139,6 +143,7 @@
     },
     {
       "name": "moe_slot_layout",
+      "platform_name": "moe.slot_layout",
       "shapes": {
         "ndim": 1,
         "dims": [
@@ -165,6 +170,7 @@
     },
     {
       "name": "moe_prenz_pack",
+      "platform_name": "moe.prenz_pack",
       "shapes": {
         "ndim": 2,
         "dims": [
@@ -194,6 +200,7 @@
     },
     {
       "name": "moe_silu_and_mul",
+      "platform_name": "moe.swiglu_gate",
       "shapes": {
         "ndim": 2,
         "dims": [
@@ -224,6 +231,7 @@
     },
     {
       "name": "moe_topk_softmax",
+      "platform_name": "moe.routing_topk_softmax",
       "shapes": {
         "ndim": 2,
         "dims": [
@@ -254,6 +262,7 @@
     },
     {
       "name": "moe_align_block_size",
+      "platform_name": "moe.align_block_size",
       "shapes": {
         "ndim": 2,
         "dims": [
@@ -284,6 +293,7 @@
     },
     {
       "name": "moe_fused_experts",
+      "platform_name": "moe.experts",
       "shapes": {
         "ndim": 2,
         "dims": [
@@ -314,6 +324,7 @@
     },
     {
       "name": "moe_unquantized_fused_moe",
+      "platform_name": "moe.experts_unquantized",
       "shapes": {
         "ndim": 2,
         "dims": [
@@ -344,6 +355,7 @@
     },
     {
       "name": "sampling_topk_threshold",
+      "platform_name": "sampling.topk_threshold",
       "shapes": {
         "ndim": 2,
         "dims": [
@@ -375,6 +387,7 @@
     },
     {
       "name": "sampling_greedy",
+      "platform_name": "sampling.greedy",
       "shapes": {
         "ndim": 2,
         "dims": [
@@ -400,6 +413,37 @@
       "impl": "torch.argmax",
       "impls": [
         "torch.argmax"
+      ],
+      "form": "torch"
+    },
+    {
+      "name": "sampling_top_p",
+      "platform_name": "sampling.top_p",
+      "shapes": {
+        "ndim": 2,
+        "dims": [
+          {
+            "min": 1
+          },
+          {
+            "min": 1
+          }
+        ]
+      },
+      "dtypes": [
+        "bfloat16",
+        "float16",
+        "float32"
+      ],
+      "kv_layouts": [
+        "ND"
+      ],
+      "graph_capturable": true,
+      "measured_ratio": 1.0,
+      "bench": "bench/bench_sampling_top_p.py",
+      "impl": "torch.top_p",
+      "impls": [
+        "torch.top_p"
       ],
       "form": "torch"
     }

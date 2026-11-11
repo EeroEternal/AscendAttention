@@ -107,7 +107,7 @@ def test_conv_kernel_is_not_default():
     """14.15x op-level, 0.995x end-to-end: measured, recorded, still opt-in."""
     assert CONV_KERNEL.enabled_by_default is False
     assert CONV_KERNEL.measured_ratio is not None
-    from ascend_attention import describe
+    from ascend_attention import describe_op as describe
 
     data = describe("gdn_conv_update")
     assert data["impls"][0]["impl"] == "torch.causal_conv1d_update"

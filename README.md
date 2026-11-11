@@ -47,7 +47,7 @@ pip install -e ".[dev]"                               # 加 pytest
   （`moe_silu_and_mul`）、非量化专家计算（`moe_fused_experts` / `moe_unquantized_fused_moe`）
   五个**算子**，加 token 对齐（slot 布局）与权重打包（ND → compact-NZ）——MoE 的数学全在本仓；
   平台只负责把它们绑到引擎符号上
-- **采样**：greedy、阈值式 top-k（保留并列）；top-p **未实现**
+- **采样**：greedy、阈值式 top-k（保留并列）、nucleus top-p（前缀式，保留最多可能 token）；min-p **未实现**
 - **多形态实现 + 库内分派**：目前落地三种形态——TileLang 内核、torch 组合、直调厂商算子
   （AscendC 形态与"搬入的厂商代码"按当前边界**未实现**）；按设备、形状、dtype、布局、**能否进图**在库内分派，
   每个实现声明能力与实测比值，没测过的实现不许默认启用
@@ -55,32 +55,49 @@ pip install -e ".[dev]"                               # 加 pytest
 
 ## 已迁算子（完整清册见 `python -m ascend_attention --capabilities`）
 
-| op | 实现 | 默认 |
-|---|---|---|
-| `paged_decode_attention` | `torch.reference`（oracle）、`tilelang.decode950`（上卡验证 + 真图捕获） | 否（内核无 op 级 A/B） |
-| `paged_prefill_attention` | `torch.reference`、`tilelang.prefill950`（内核在仓、未接线） | reference 是 |
-| `gdn_gating` | `torch.gating` | 是（基线） |
-| `gdn_conv_update` | `torch.causal_conv1d_update`、`tilelang.conv950`（op 级 14.15×） | 基线是 |
-| `gdn_chunk_wu` | `torch.solve_tril_recompute_wu`、`tilelang.chunk_wu950`（14.55×） | 基线是 |
-| `moe_slot_layout` | `torch.slot_layout` | 是 |
-| `moe_prenz_pack` | `torch.prenz_pack` | 是 |
-| `moe_topk_softmax` | `torch.topk_softmax` | 是（基线） |
-| `moe_align_block_size` | `torch.align_block_size` | 是（基线） |
-| `moe_silu_and_mul` | `torch.silu_and_mul` | 是（基线） |
-| `moe_fused_experts` | `torch.fused_experts` | 是（基线） |
-| `moe_unquantized_fused_moe` | `torch.unquantized_fused_moe` | 是（基线） |
-| `sampling_topk_threshold` | `torch.topk_threshold`、`vendor.deep_select`（**3.8432×**，唯一默认开启的非基线条目） | 两者都是 |
-| `sampling_greedy` | `torch.argmax` | 是 |
+| op | 语义名（平台绑定用） | 实现 | 默认 |
+|---|---|---|---|
+| `paged_decode_attention` | `attention.paged_decode` | `torch.reference`（oracle）、`tilelang.decode950`（上卡验证 + 真图捕获） | 否（内核无 op 级 A/B） |
+| `paged_prefill_attention` | `attention.paged_prefill` | `torch.reference`、`tilelang.prefill950`（内核在仓、未接线） | reference 是 |
+| `gdn_gating` | `gdn.gating` | `torch.gating` | 是（基线） |
+| `gdn_conv_update` | `gdn.conv_update` | `torch.causal_conv1d_update`、`tilelang.conv950`（op 级 14.15×） | 基线是 |
+| `gdn_chunk_wu` | `gdn.chunk_wu` | `torch.solve_tril_recompute_wu`、`tilelang.chunk_wu950`（14.55×） | 基线是 |
+| `moe_slot_layout` | `moe.slot_layout` | `torch.slot_layout` | 是 |
+| `moe_prenz_pack` | `moe.prenz_pack` | `torch.prenz_pack` | 是 |
+| `moe_topk_softmax` | `moe.routing_topk_softmax` | `torch.topk_softmax` | 是（基线） |
+| `moe_align_block_size` | `moe.align_block_size` | `torch.align_block_size` | 是（基线） |
+| `moe_silu_and_mul` | `moe.swiglu_gate` | `torch.silu_and_mul` | 是（基线） |
+| `moe_fused_experts` | `moe.experts` | `torch.fused_experts` | 是（基线） |
+| `moe_unquantized_fused_moe` | `moe.experts_unquantized` | `torch.unquantized_fused_moe` | 是（基线） |
+| `sampling_topk_threshold` | `sampling.topk_threshold` | `torch.topk_threshold`、`vendor.deep_select`（**3.8432×**，唯一默认开启的非基线条目） | 两者都是 |
+| `sampling_top_p` | `sampling.top_p` | `torch.top_p`（13.55 ms @ B=8/V=152064/p=0.9，CPU） | 是（基线） |
+| `sampling_greedy` | `sampling.greedy` | `torch.argmax` | 是 |
 
-`manifest.json` 只收"有实测比值且默认启用"的实现（13 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
+`manifest.json` 只收"有实测比值且默认启用"的实现（14 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
 两者的分工见 `docs/contracts/exposure.md`。
+
+平台按**语义名**（第二列）绑定，不按本仓的 op 名。本仓这一半已就位并经过跨仓实测：
+
+- `manifest.json` 每条带 `platform_name`（JSON Schema 的 required）；
+- 发现两条路都通：`pyproject.toml` 的 `ascend_platform.providers` entry point（装成 wheel 时），以及平台
+  `ASCEND_PLATFORM_OPS=ascend_attention` 时对**包本身**调 `describe()`（所以根上有 `ascend_attention.describe()`）；
+- 描述符是 `{"name","version","requires_platform","ops":{语义名:{"target":"module:attribute",...}}}`，
+  每个 `target` 都指向一个可调用对象（MoE 计算/采样/布局就是算法函数本身；注意力与 GDN 由
+  `entry.py` 的一次性包装 `plan+run`）。
+- 平台侧实测（用它的 `contracts/provider.py`）：5 个 MoE 名字 **5/5 绑定**，其中
+  `unquantized_fused_moe` 是它旧表里的键，本仓以 `alias_of` 别名兼容，等它的语义词表落地后删掉。
+
+**仍有偏差的两处不在本仓**：GDN 的 8 个名字平台还在按 vLLM 符号问（走它自己的 layout 回退，
+它的 P1 `requirements.py` 才改成语义名）；`fused_moe_oot.make_oot_method` 那一层是引擎 ABI，归它的
+`engine/abi/`，本仓不提供（也不该提供）。
 
 ### 明确未实现（写在前面，免得被集成方当成已有能力）
 
 - **MoE 的内核化**：计算已是纯 torch 基线（正确性有 fp64 定义式取证），但**没有加速内核**；
   `grouped_gemm` 0.86×、`prenz` 直吃、`align_*` 未达门槛都只归档，理由见 `docs/archive-moe.md`。
 - **MLA**、**量化（fp8/fp4）算子**：属本仓的算子面，未实现。
-- **采样**：top-p / min-p 未实现（只有 greedy 与阈值式 top-k）。
+- **采样**：min-p 未实现（它是另一条规则——`prob >= min_p * max_prob`——不会被别名成 top-p；
+  `ops/sampling/__init__.py` 的 `MINP_UNIMPLEMENTED` 把这句话写在代码里）。
 - **prefill 编排接线**：内核在仓，tile-count 编排属平台侧，尚未接上。
 
 ## 解耦设计

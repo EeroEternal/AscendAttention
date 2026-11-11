@@ -29,7 +29,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ._version import __version__
 from .capture import capture_guard, check_capture
-from .dispatch import Decision, describe, select
+from .dispatch import Decision, describe as describe_op, select
 from .device import DeviceProfile, current as current_device, profile as device_profile
 from .manifest import manifest as _manifest
 from .plan import OpPlan
@@ -47,6 +47,7 @@ __all__ = [
     "run",
     "capability_manifest",
     "describe",
+    "describe_op",
     "implementations",
     "device",
     "OpPlan",
@@ -60,9 +61,12 @@ __all__ = [
 
 
 def capabilities(op: Optional[str] = None) -> Dict[str, Any]:
-    """What this build can do, as plain data.  No device is touched and no tensor is built."""
+    """What this build can do, as plain data.  No device is touched and no tensor is built.
+
+    With ``op`` this is the per-op description (``describe_op``); without it, the whole inventory.
+    """
     if op is not None:
-        return describe(op)
+        return describe_op(op)
     return {
         "library": "ascend-attention",
         "version": __version__,
@@ -72,7 +76,7 @@ def capabilities(op: Optional[str] = None) -> Dict[str, Any]:
 
 
 def describe_all() -> List[Dict[str, Any]]:
-    return [describe(name) for name in REGISTRY.names()]
+    return [describe_op(name) for name in REGISTRY.names()]
 
 
 def implementations(op: str) -> Tuple[ImplSpec, ...]:
@@ -138,6 +142,19 @@ def capability_manifest(**kwargs: Any) -> Dict[str, Any]:
     the submodule of the same name, and ``ascend_attention.manifest.load()`` would stop working.
     """
     return _manifest(**kwargs)
+
+
+def describe() -> Dict[str, Any]:
+    """The provider descriptor: what this package serves and where the code is.
+
+    Same document as ``ascend_attention.provider.descriptor()``, exposed at the package root because the
+    platform's pinned-root discovery (``ASCEND_PLATFORM_OPS=ascend_attention``) calls ``describe()`` on
+    the package itself - a user pointing the platform at a checkout should not have to install metadata
+    for the binding to work.
+    """
+    from .provider import descriptor as _descriptor
+
+    return _descriptor()
 
 
 def device() -> DeviceProfile:

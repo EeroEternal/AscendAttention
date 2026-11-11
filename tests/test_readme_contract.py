@@ -56,7 +56,7 @@ def test_unimplemented_features_are_labelled():
     text = _text()
     for phrase, marker in [
         ("MoE 的内核化", "未实现"),
-        ("top-p", "未实现"),
+        ("min-p", "未实现"),
         ("AscendC", "未实现"),
         ("引擎适配不在本仓", "平台"),
         ("MLA", "未实现"),

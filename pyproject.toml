@@ -37,6 +37,13 @@ pinned = ["torch==2.13.0", "torch-npu==2.13.0rc1", "tilelang==0.1.15"]
 # manifest contract test, and it is deliberately not installable from this package.
 dev-platform = []
 
+# The provider contract with AscendPlatform (its `contracts/provider.py` owns the group constant and the
+# descriptor schema; docs/notes/repo-boundary.md §5 there).  One entry per operator library: the value is a
+# factory returning a Provider that can `describe()` and `load()` a semantic op name.  Declared here so an
+# installed wheel is discoverable; `tests/test_provider.py` checks the target imports without installing.
+[project.entry-points."ascend_platform.providers"]
+ascend_attention = "ascend_attention.provider:provider"
+
 [project.urls]
 Homepage = "https://github.com/EeroEternal/AscendAttention"
 
