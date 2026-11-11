@@ -80,7 +80,7 @@ pip install -e ".[dev]"                               # 加 pytest
 | `mla_decode_attention` | `attention.mla_decode` | `torch.reference`（15.79 ms @ B=8/H=128/D_c=512/D_r=64/KV=2048，CPU） | 是（基线） |
 | `sampling_greedy` | `sampling.greedy` | `torch.argmax` | 是 |
 
-`manifest.json` 只收"有实测比值且默认启用"的实现（17 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
+`manifest.json` 只收"有实测比值且默认启用"的实现（18 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
 两者的分工见 `docs/contracts/exposure.md`。
 
 平台按**语义名**（第二列）绑定，不按本仓的 op 名。本仓这一半已就位并经过跨仓实测：

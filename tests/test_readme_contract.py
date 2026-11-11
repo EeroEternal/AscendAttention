@@ -68,6 +68,26 @@ def test_unimplemented_features_are_labelled():
         assert marker in window, f"{phrase!r} is claimed without a {marker!r} marker nearby"
 
 
+def test_the_manifest_count_in_the_readme_matches_the_file():
+    """A hand-written count is a claim; the manifest is the fact. This is the cheapest way to keep them
+    equal - the number drifted twice while this batch was being written."""
+    import json
+    import pathlib
+    import re
+
+    text = _text()
+    match = re.search(r"只收\"有实测比值且默认启用\"的实现（(\d+) 条）", text)
+    assert match, "README lost the sentence that states the manifest size"
+    manifest = json.loads(
+        (pathlib.Path(__file__).resolve().parents[1] / "src/ascend_attention/manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert int(match.group(1)) == len(manifest["ops"]), (
+        f"README says {match.group(1)} manifest entries, the file has {len(manifest['ops'])}"
+    )
+
+
 def test_the_install_section_names_both_files():
     text = _text()
     assert "## 安装" in text

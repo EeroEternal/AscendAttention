@@ -62,7 +62,7 @@ op 级与端到端分开记；**端到端没过关的 op 不进默认**。
 
 ## 清单（`src/ascend_attention/manifest.json`）当前内容
 
-平台清单只收「有 `measured_ratio` + `bench` 且默认启用」的实现：现在 **19 条**，其中 12 条是
+平台清单只收「有 `measured_ratio` + `bench` 且默认启用」的实现：现在 **18 条**，其中 12 条是
 `torch` 基线（比值 1.0，含义是"有这个 op、与厂商路径持平"，不是性能声明），1 条是真加速
 （`vendor.deep_select` 3.8432×）。默认关的实现（decode 的两个、conv/chunk_wu 的内核、prefill 内核）
 **不进清单**，但都出现在完整清册里，带 `graph`/`requires`/`note`：

@@ -99,6 +99,28 @@ def test_the_platform_resolver_returns_our_functions_for_the_semantic_keys_it_as
         assert value is function, f"{key}: got {value!r} ({note})"
 
 
+def test_the_platform_parser_accepts_the_descriptor_we_publish():
+    """Our document has to survive *their* parser, including the fields they ignore.
+
+    Their ``parse_descriptor`` is the gate at discovery time, and it is stricter than a dict shape check:
+    it validates ``target`` as ``module:attribute`` and rejects unknown *structure* while ignoring unknown
+    keys. Now that the descriptor carries 19 ops and per-op notes (which mention punctuation, quotes and
+    parentheses), a note that broke the schema would fail at their start-up rather than here.
+    """
+    try:
+        from ascend_platform.contracts.provider import parse_descriptor
+    except Exception:  # pragma: no cover - platform not installed
+        pytest.skip("AscendPlatform is not importable; the parser half cannot be checked here")
+
+    import ascend_attention
+
+    parsed = parse_descriptor(ascend_attention.describe())
+    ours = set(ascend_attention.describe()["ops"])
+    theirs = set(parsed.ops)
+    assert theirs == ours, f"parser dropped or invented ops: {sorted(ours ^ theirs)}"
+    assert parsed.name == "ascend_attention"
+
+
 def test_the_mapping_itself_is_free_of_engine_imports():
     """The mapping is a *name* table, not an import of the engine: a target must be ours."""
     for name, target in REQUIRED_TO_TARGET.items():
