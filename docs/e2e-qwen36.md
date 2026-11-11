@@ -73,6 +73,35 @@ sorted_ids, expert_ids, num_tokens_post_pad, expert_map)` vs 本仓的 `(topk_id
 本模型的 torch 专家路径不经过它（我们的 `fused_experts` 直接吃 `topk_ids`），所以没崩；换模型或换专家
 内核就会崩，应该一起加适配。
 
+## 已发现但未归因：长生成会退化
+
+8 tokens 时输出正常，**64 tokens 时同一条 prompt 退化成复读**（确定性复现，两次运行逐字相同）：
+
+```
+<think>
+Here's a thinking process:
+
+1.  **Understand User Query:** The user wants a concise explanation of how "paged memory" works in!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+```
+
+所以现在只能说"跑得动"，不能说"跑对了"。已经排除的两个方向：
+
+1. **不是本仓的 tilelang 内核**：`ASCEND_ATTN_CANDIDATES=off`（关掉本仓全部候选实现，退回 baseline）重跑，
+   输出逐字相同 —— 候选内核没参与。
+2. **不是本仓的 recurrent decode 算子**：新加 `tests/test_gdn_recurrent.py`，把 packed-decode 形态按
+   `T` 次调用携带 state 和 sequence 形态在同一组 token 上逐元素对齐（`atol=1e-5`），末步输出与末态都一致；
+   另加无效 state 行（`<=0`）不写状态、写零的用例。这两个形态此前**没有测试**（模块 docstring 引用了
+   `tests/test_gdn_recurrent.py`，文件却不存在），是真实缺口，不是修饰。
+
+仍未归因的候选，按怀疑度排序：平台的 GDN 状态布线（conv_state / ssm_state_indices 的行号与推进）、
+attention decode 的 KV 行号、`fused_sigmoid_gating_delta_rule_update` 与 conv1d 的组合（本仓，无独立测试）。
+
+**vendor 对照跑不了**：`/home/dlb/.venv_ascend` 里 vllm_ascend 的 Qwen3.6 路径缺
+`_C_ascend.npu_causal_conv1d_custom`（`AttributeError`），也就是说这条模型在 vendor 栈上现在也跑不起来——
+这正是"自己写一层"的理由，但也意味着没有现成的参考输出可比。可用替代 oracle：`transformers` 直接在 NPU
+上贪心解码同一 prompt，或逐步比较 `fused_sigmoid_gating_delta_rule_update` 与
+（`causal_conv1d_update` + 序列形态）的合成。
+
 ## 非阻塞项（不影响"跑通"，影响"可用"）
 
 1. **性能**：8 tokens / 5.7 s ≈ **1.4 tok/s**（vLLM 自带进度条读数）。**归因未做**：候选是纯 torch 的
