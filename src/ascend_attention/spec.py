@@ -53,6 +53,10 @@ __all__ = [
 #: ``vendor_code`` = vendored third-party source; ``vendor_call`` = direct call into a vendor op.
 FORMS: Tuple[str, ...] = ("torch", "tilelang", "ascendc", "vendor_code", "vendor_call")
 
+#: The forms whose availability depends on the machine: a manifest built on a box without the vendor
+#: package cannot reproduce a snapshot built on one that has it.
+VENDOR_FORMS: Tuple[str, ...] = ("vendor_code", "vendor_call")
+
 #: Three tiers, not two: "allocates but never syncs" is *not* the same as "capture safe".
 GRAPHS: Tuple[str, ...] = ("capture_safe", "eager_only", "unknown")
 

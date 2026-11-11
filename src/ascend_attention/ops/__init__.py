@@ -7,6 +7,6 @@ they reference are imported lazily inside their functions, so this stays true on
 
 from __future__ import annotations
 
-from . import attention, fla, gdn, moe, quant, sampling  # noqa: F401  (registration side effect)
+from . import attention, fla, gdn, moe, sampling  # noqa: F401  (registration side effect)
 
-__all__ = ["attention", "fla", "gdn", "moe", "quant", "sampling"]
+__all__ = ["attention", "fla", "gdn", "moe", "sampling"]

@@ -48,8 +48,6 @@ pip install -e ".[dev]"                               # 加 pytest
   五个**算子**，加 token 对齐（slot 布局）与权重打包（ND → compact-NZ）——MoE 的数学全在本仓；
   平台只负责把它们绑到引擎符号上
 - **采样**：greedy、阈值式 top-k（保留并列）、nucleus top-p（前缀式）、min-p（相对概率下限，无排序）
-- **量化（fp8）**：fake-quant（`quant_dequant_fp8`，饱和而非溢出，per-tensor/per-token/per-channel）
-  与 fp8 GEMM 参考（`quant_fp8_gemm`，激活按 token、权重按 channel 反量化）——**定义式**，供以后的 fp8 内核对齐
 - **多形态实现 + 库内分派**：目前落地三种形态——TileLang 内核、torch 组合、直调厂商算子
   （AscendC 形态与"搬入的厂商代码"按当前边界**未实现**）；按设备、形状、dtype、布局、**能否进图**在库内分派，
   每个实现声明能力与实测比值，没测过的实现不许默认启用
@@ -74,11 +72,9 @@ pip install -e ".[dev]"                               # 加 pytest
 | `sampling_topk_threshold` | `sampling.topk_threshold` | `torch.topk_threshold`、`vendor.deep_select`（**3.8432×**，唯一默认开启的非基线条目） | 两者都是 |
 | `sampling_top_p` | `sampling.top_p` | `torch.top_p`（13.55 ms @ B=8/V=152064/p=0.9，CPU） | 是（基线） |
 | `sampling_min_p` | `sampling.min_p` | `torch.min_p`（**0.93 ms** 同形状——无排序，所以快 14.5×） | 是（基线） |
-| `quant_dequant_fp8` | `quant.dequant_fp8` | `torch.fake_quant`（42.13 ms @ 4096×7168，CPU） | 是（基线） |
-| `quant_fp8_gemm` | `quant.fp8_gemm` | `torch.dequant_gemm`（9.87 ms @ 1024×4096×1024，CPU） | 是（基线） |
 | `sampling_greedy` | `sampling.greedy` | `torch.argmax` | 是 |
 
-`manifest.json` 只收"有实测比值且默认启用"的实现（17 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
+`manifest.json` 只收"有实测比值且默认启用"的实现（15 条）；默认关的实现连同 `graph`/`requires`/拒绝原因在完整清册里，
 两者的分工见 `docs/contracts/exposure.md`。
 
 平台按**语义名**（第二列）绑定，不按本仓的 op 名。本仓这一半已就位并经过跨仓实测：
@@ -112,10 +108,9 @@ pip install -e ".[dev]"                               # 加 pytest
   `grouped_gemm` 0.86×、`prenz` 直吃、`align_*` 未达门槛都只归档，理由见 `docs/archive-moe.md`。
 - **MLA**：**不做**。目标模型 Qwen3.6-35B-A3B 是 GQA（16 Q / 2 KV，head_dim 256）+ GDN 线性注意力 + MoE 的混合架构，
   没有 latent 注意力层；MLA 是 DeepSeek 系的路径，写它属于偏离目标的扩张（本轮曾实现过一份，已整体撤掉）。
-- **量化的加速内核**：fp8 的**定义式**已落地（`quant.dequant_fp8` / `quant.fp8_gemm`，含饱和、
-  scale 轴、折叠等价三处取证），但**没有 fp8 计算内核**；**fp4 未实现**（格式、block scale、
-  硬件路径都没有可验证的依据，不写猜的）。
-- 因此 `fused_experts` 遇到非空 `quant_config` 会**拒绝**而不是悄悄按 bf16 算——量化路径要等这条接上。
+- **量化（fp8/fp4）**：**不做**。目标模型是 bf16 权重、`supported_quantization` 为空、平台上量化配置被整体
+  拒绝，写 fp8 fake-quant 与 fp8 GEMM 参考属于又一条"没有调用方"的线（本轮曾实现过一份，已整体撤掉）；
+  `fused_experts` 遇到非空 `quant_config` 仍会**拒绝**而不是悄悄按 bf16 算，这条守卫保留。
 - **prefill 的"可复用 plan"**：`tilelang.prefill950` 已接线并能跑出与 reference 一致的数值，
   但**一个 plan 只对应当前这一步的 prompt 长度**（tile 数 = `Σ ceil(qo_len_b · group / block_q)`），
   跨步复用需要重新规划；这就是它默认关、且 `graph=eager_only` 的原因。没有厂商 prefill A/B，

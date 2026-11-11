@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -25,6 +24,42 @@ import torch
 from ascend_attention import manifest, provider, vocabulary
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _entry_points_from_pyproject(group: str) -> dict:
+    """The ``group`` entry-point table, without requiring a TOML parser.
+
+    ``tomllib`` is 3.11+ and this suite is run on 3.9 as well (the other repo's CPU interpreter), where
+    a module-scope ``import tomllib`` did not skip one test - it made the whole file uncollectable, which
+    is how a provider contract ends up silently unenforced.  The table we need is a handful of
+    ``key = "value"`` lines, so the fallback scans it; the parser is still preferred when available and
+    the two are asserted to agree (``test_the_plain_text_fallback_matches_tomllib``) so the fallback
+    cannot drift.
+    """
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        return _scan_entry_point_table(text, group)
+    return tomllib.loads(text)["project"]["entry-points"][group]
+
+
+def _scan_entry_point_table(text: str, group: str) -> dict:
+    header = f'[project.entry-points."{group}"]'
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.strip() == header), None)
+    if start is None:
+        raise AssertionError(f"pyproject.toml has no {header} table")
+    table: dict = {}
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("["):
+            break
+        key, _, value = stripped.partition("=")
+        table[key.strip()] = value.strip().strip('"')
+    return table
 
 #: Engine packages the operator layer must not import or name. Kept here, not imported from the
 #: platform: this repo should not need the platform to know what an engine is.
@@ -36,8 +71,7 @@ ENGINE_ROOTS = ("vllm", "vllm_ascend", "mindie", "mindspore", "triton", "flashin
 
 def test_pyproject_declares_the_entry_point_and_the_target_imports():
     """Checking the TOML (not installed metadata) keeps this honest on a PYTHONPATH checkout."""
-    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    group = data["project"]["entry-points"][provider.PROVIDER_GROUP]
+    group = _entry_points_from_pyproject(provider.PROVIDER_GROUP)
     assert group == {"ascend_attention": provider.ENTRY_POINT}
     module_name, _, attribute = provider.ENTRY_POINT.partition(":")
     factory = getattr(importlib.import_module(module_name), attribute)
@@ -290,6 +324,15 @@ def test_the_functional_signatures_the_engine_adapter_depends_on():
         "topk_weights",
         "topk_ids",
     ], "num_experts must stay keyword-only: the engine passes five positionals"
+
+
+def test_the_plain_text_fallback_matches_tomllib():
+    """The 3.9 path must parse exactly what a real TOML reader parses, or the contract is unenforced."""
+    tomllib = pytest.importorskip("tomllib")
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    real = tomllib.loads(text)["project"]["entry-points"]
+    for group in real:
+        assert _scan_entry_point_table(text, group) == real[group], group
 
 
 def test_the_provider_self_check_passes():

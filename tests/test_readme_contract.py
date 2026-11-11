@@ -51,7 +51,9 @@ def test_unimplemented_features_are_labelled():
     three come from the boundary review: MLA and quantisation were filed under "platform" (they are
     operators, and they are not written yet), and the engine adapter was described as "not done
     because it would break the zero-vllm rule" -- it is not ours to write at all, so the note has to
-    say *whose* it is.  A README that drops any of these six sentences is advertising again.
+    say *whose* it is.  MLA and quantisation have since been dropped outright rather than left half
+    written (the target model needs neither), so those two entries now require the reason, not a
+    "missing kernel" apology.  A README that drops any of these five sentences is advertising again.
     """
     text = _text()
     for phrase, marker in [
@@ -59,8 +61,7 @@ def test_unimplemented_features_are_labelled():
         ("AscendC", "未实现"),
         ("引擎适配不在本仓", "平台"),
         ("MLA", "不做"),
-        ("量化的加速内核", "没有 fp8 计算内核"),
-        ("fp4 未实现", "未实现"),
+        ("量化（fp8/fp4）", "不做"),
         ("供给契约两仓都已落地", "实测 10 绑定"),
     ]:
         assert phrase in text, f"README lost the note about {phrase!r}"

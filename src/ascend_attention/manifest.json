@@ -282,7 +282,7 @@
       "kv_layouts": [
         "ND"
       ],
-      "graph_capturable": true,
+      "graph_capturable": false,
       "measured_ratio": 1.0,
       "bench": "bench/bench_moe_compute.py",
       "impl": "torch.align_block_size",
@@ -313,7 +313,7 @@
       "kv_layouts": [
         "ND"
       ],
-      "graph_capturable": true,
+      "graph_capturable": false,
       "measured_ratio": 1.0,
       "bench": "bench/bench_moe_compute.py",
       "impl": "torch.fused_experts",
@@ -344,86 +344,12 @@
       "kv_layouts": [
         "ND"
       ],
-      "graph_capturable": true,
+      "graph_capturable": false,
       "measured_ratio": 1.0,
       "bench": "bench/bench_moe_compute.py",
       "impl": "torch.unquantized_fused_moe",
       "impls": [
         "torch.unquantized_fused_moe"
-      ],
-      "form": "torch"
-    },
-    {
-      "name": "quant_dequant_fp8",
-      "platform_name": "quant.dequant_fp8",
-      "shapes": {
-        "ndim": 2,
-        "dims": [
-          {
-            "min": 1
-          },
-          {
-            "in": [
-              1024,
-              4096,
-              7168,
-              8192,
-              152064
-            ]
-          }
-        ]
-      },
-      "dtypes": [
-        "bfloat16",
-        "float16",
-        "float32"
-      ],
-      "kv_layouts": [
-        "ND"
-      ],
-      "graph_capturable": true,
-      "measured_ratio": 1.0,
-      "bench": "bench/bench_quant.py",
-      "impl": "torch.fake_quant",
-      "impls": [
-        "torch.fake_quant"
-      ],
-      "form": "torch"
-    },
-    {
-      "name": "quant_fp8_gemm",
-      "platform_name": "quant.fp8_gemm",
-      "shapes": {
-        "ndim": 2,
-        "dims": [
-          {
-            "min": 1
-          },
-          {
-            "in": [
-              1024,
-              4096,
-              7168,
-              8192,
-              152064
-            ]
-          }
-        ]
-      },
-      "dtypes": [
-        "bfloat16",
-        "float16",
-        "float32"
-      ],
-      "kv_layouts": [
-        "ND"
-      ],
-      "graph_capturable": true,
-      "measured_ratio": 1.0,
-      "bench": "bench/bench_quant.py",
-      "impl": "torch.dequant_gemm",
-      "impls": [
-        "torch.dequant_gemm"
       ],
       "form": "torch"
     },

@@ -86,8 +86,6 @@ ENTRY_POINT = "ascend_attention.provider:provider"
 #: what a provider contract is for. It stays reachable through ``plan(impl="tilelang.decode950")``.
 TARGETS: Mapping[str, str] = {
     "attention.paged_prefill": "ascend_attention.entry:paged_prefill",
-    "quant.dequant_fp8": "ascend_attention.ops.quant:quant_dequant",
-    "quant.fp8_gemm": "ascend_attention.ops.quant:fp8_gemm_reference",
     "gdn.gating": "ascend_attention.entry:gdn_gating",
     "gdn.conv_update": "ascend_attention.entry:gdn_conv_update",
     "gdn.chunk_wu": "ascend_attention.entry:gdn_chunk_wu",

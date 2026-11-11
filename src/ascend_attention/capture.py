@@ -30,6 +30,7 @@ import torch
 __all__ = [
     "ALLOC_PREFIXES",
     "SYNC_OPS",
+    "SHAPE_OPS",
     "CaptureGuard",
     "capture_guard",
     "check_capture",
@@ -66,6 +67,25 @@ SYNC_OPS = frozenset(
     }
 )
 
+#: Data-dependent **output shapes**.  These are not host reads and not allocations: the backend has to
+#: inspect the data to size the result, which forces a synchronisation inside the op and makes the call
+#: illegal under graph capture.  They were invisible here until a reviewer pointed out that
+#: ``fused_experts`` calls ``aten::nonzero`` once per expert and the guard still called it safe — the
+#: tier said ``capture_safe`` and nothing contradicted it.  A guard whose op list is too short is worse
+#: than no guard, because it certifies.
+SHAPE_OPS = frozenset(
+    {
+        "aten::nonzero",
+        "aten::masked_select",
+        "aten::unique",
+        "aten::unique_dim",
+        "aten::unique_consecutive",
+        "aten::bincount",
+        "aten::linalg_lstsq",
+        "aten::_unique2",
+    }
+)
+
 #: ``aten::to``/``aten::copy_`` are only a problem when they move data to the host; the guard looks at
 #: the target device rather than the op name for those.
 _CPU_TRANSFER_OPS = frozenset({"aten::to", "aten::copy_", "aten::_to_copy"})
@@ -93,13 +113,17 @@ class CaptureGuard:
             "allocs": len(self.allocs),
             "distinct_ops": len(set(self.ops)),
             "sync_ops": sorted({s.split("(")[0] for s in self.syncs}),
+            "shape_ops": sorted({s.split("(")[0] for s in self.syncs if s.split("(")[0] in SHAPE_OPS}),
             "capture_safe": not self.syncs,
         }
 
     def explain(self) -> str:
         if not self.syncs:
             return f"capture-safe: {len(self.allocs)} allocations, no host reads"
-        head = ", ".join(sorted({s.split("(")[0] for s in self.syncs}))
+        names = {s.split("(")[0] for s in self.syncs}
+        head = ", ".join(sorted(names))
+        if names & SHAPE_OPS and not (names & SYNC_OPS):
+            return f"NOT capture-safe: {len(self.syncs)} data-dependent shape(s) via {head}"
         return f"NOT capture-safe: {len(self.syncs)} host read(s)/sync(s) via {head}"
 
     # -- dispatch -----------------------------------------------------------------
@@ -108,6 +132,11 @@ class CaptureGuard:
         self.ops.append(raw)
         name = _canonical(raw)
         if name in SYNC_OPS:
+            self.syncs.append(f"{name}({_short(args)})")
+            return
+        if name in SHAPE_OPS:
+            # Same verdict, different cause: the synchronisation is inside the op (it must look at the
+            # data to size the result), so neither ``ALLOC_PREFIXES`` nor ``SYNC_OPS`` would see it.
             self.syncs.append(f"{name}({_short(args)})")
             return
         if name in _CPU_TRANSFER_OPS and _moves_to_cpu(args, kwargs):

@@ -134,3 +134,66 @@ def test_guard_reports_distinct_ops_for_a_real_call():
         torch.relu(torch.randn(4, 4))
     assert guard.summary()["distinct_ops"] >= 1
     assert any(op.startswith("aten.") for op in guard.ops)
+
+
+# -- the MoE family: two ops that used to claim capture_safe and cannot ------------------------
+#
+# A reviewer from the platform read the torch references and pointed out the claim was wrong: the block
+# alignment reads the pair count back to the host, and the routed MLP selects pairs with ``nonzero``,
+# whose *output shape* depends on the routing data. The second one was invisible to this guard (its op
+# list had no data-dependent-shape entry), which is why the registry said ``capture_safe`` for months
+# without anything contradicting it. Both directions are pinned now.
+
+
+def _moe_inputs():
+    torch.manual_seed(0)
+    pairs = torch.tensor([[0, 1], [2, 1], [1, 2]], dtype=torch.int32)
+    hidden, inter, experts = 8, 4, 3
+    h = torch.randn(3, hidden)
+    w1 = torch.randn(experts, 2 * inter, hidden)
+    w2 = torch.randn(experts, hidden, inter)
+    weights = torch.full((3, 2), 0.5)
+    return pairs, h, w1, w2, weights
+
+
+def test_block_alignment_is_eager_only_because_it_reads_the_pair_count_back():
+    from ascend_attention.ops.moe import compute
+
+    pairs, *_ = _moe_inputs()
+    with capture_guard() as guard:
+        compute.moe_align_block_size(pairs, 3, 2)
+    summary = guard.summary()
+    assert summary["capture_safe"] is False
+    assert "aten::_local_scalar_dense" in summary["sync_ops"], (
+        "the op returns the padded pair count as a tensor *and* uses it for the expert map"
+    )
+
+
+def test_routed_experts_is_eager_only_because_nonzero_has_a_data_dependent_shape():
+    from ascend_attention.ops.moe import compute
+
+    pairs, h, w1, w2, weights = _moe_inputs()
+    with capture_guard() as guard:
+        compute.fused_experts(h, w1, w2, weights, pairs)
+    summary = guard.summary()
+    assert summary["capture_safe"] is False
+    assert "aten::nonzero" in summary["shape_ops"], (
+        "one nonzero per expert: the tile size depends on the routing, so it cannot enter a graph"
+    )
+    assert "data-dependent shape" in guard.explain()
+
+
+def test_router_topk_is_capture_safe_and_the_guard_agrees():
+    """``topk``/``sort``/``softmax`` are static-shape: the k is a plan-time integer."""
+    from ascend_attention.ops.moe import compute
+
+    torch.manual_seed(0)
+    scores = torch.randn(6, 4)
+    with capture_guard() as guard:
+        compute.topk_softmax(scores, 2)
+    summary = guard.summary()
+    assert summary["capture_safe"] is True
+    assert summary["syncs"] == 0
+    # the reference sorts and gathers at plan-time-known k; no allocation claim is made here because
+    # torch's topk/sort may write into caller-visible buffers instead of going through aten::empty
+    assert summary["distinct_ops"] >= 3

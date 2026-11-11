@@ -274,23 +274,33 @@ TOPK_IMPL = _moe_impl(
 ALIGN_IMPL = _moe_impl(
     ALIGN_OP,
     "torch.align_block_size",
+    graph="eager_only",
     note=(
         "expert-major, block-padded pair layout for a grouped GEMM; buffers are the engine's fixed "
-        "sizes and the tail is sentinel-filled, so no allocation happens per call"
+        "sizes and the tail is sentinel-filled, so no allocation happens per call. NOT graph-capturable: "
+        "the returned pair count is read back to the host (``padded.sum()`` -> aten::_local_scalar_dense, "
+        "compute.py:223/226) and the per-expert positions go through ``torch.nonzero`` (compute.py:149)"
     ),
 )
 EXPERTS_IMPL = _moe_impl(
     EXPERTS_OP,
     "torch.fused_experts",
+    graph="eager_only",
     note=(
         "unquantised routed MLP (w2 @ silu(w1 @ x), weighted sum over top-k); quant_config is refused "
-        "rather than ignored; expert_map implements expert parallelism"
+        "rather than ignored; expert_map implements expert parallelism. NOT graph-capturable: the torch "
+        "reference selects one expert's pairs at a time with ``torch.nonzero`` (compute.py:337), whose "
+        "output shape depends on the routing data - that shape is a graph break, not an allocation"
     ),
 )
 UNQUANT_IMPL = _moe_impl(
     UNQUANT_OP,
     "torch.unquantized_fused_moe",
-    note="the 'method' entry point: same math as moe_fused_experts, argument names fixed for serving",
+    graph="eager_only",
+    note=(
+        "the 'method' entry point: same math as moe_fused_experts, argument names fixed for serving, so "
+        "it inherits that op's data-dependent shape (torch.nonzero per expert) and is eager-only"
+    ),
 )
 
 for _impl in (SILU_IMPL, TOPK_IMPL, ALIGN_IMPL, EXPERTS_IMPL, UNQUANT_IMPL):

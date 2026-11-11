@@ -29,7 +29,7 @@ strings that can no longer resolve the enclosing function's locals.
 import math
 import os
 from ...utils import kernel_flag, kernel_flag_bool
-from typing import Any, List
+from typing import Any, List, Optional
 
 import torch
 
@@ -1672,7 +1672,7 @@ def paged_prefill_split_head_ascend950(
     block_q: int = 128,
     dtype: str = "bfloat16",
     threads: int = 128,
-    num_slots: int | None = None,
+    num_slots: Optional[int] = None,
 ):
     """Head-split prefill: the **fully-visible** page chunks of a q-block (H20).
 
@@ -1916,7 +1916,7 @@ def paged_prefill_split_frontier_ascend950(
     block_q: int = 128,
     dtype: str = "bfloat16",
     threads: int = 128,
-    num_slots: int | None = None,
+    num_slots: Optional[int] = None,
 ):
     """Frontier-split prefill: the causal-frontier page chunk (H20, 3e mask form).
 
@@ -2256,11 +2256,11 @@ def forward_split(
     part_lse: torch.Tensor,
     out_pad: torch.Tensor,
     q_pad: torch.Tensor,
-    dtype: str | None = None,
-    kv_indptr: torch.Tensor | None = None,
-    kv_indices: torch.Tensor | None = None,
-    kv_last_page_len: torch.Tensor | None = None,
-    out: torch.Tensor | None = None,
+    dtype: Optional[str] = None,
+    kv_indptr: Optional[torch.Tensor] = None,
+    kv_indices: Optional[torch.Tensor] = None,
+    kv_last_page_len: Optional[torch.Tensor] = None,
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Two-launch split-KV decode: partial attention, then the weighted merge.
 
@@ -2411,11 +2411,11 @@ def forward_prefill(
     *,
     group: int,
     block_q: int = 128,
-    dtype: str | None = None,
-    out: torch.Tensor | None = None,
-    kernel_batch: int | None = None,
+    dtype: Optional[str] = None,
+    out: Optional[torch.Tensor] = None,
+    kernel_batch: Optional[int] = None,
     pv_single_pass: bool = False,
-    pack: tuple | None = None,
+    pack: Optional[tuple] = None,
 ) -> torch.Tensor:
     """Run paged prefill / append: packs ``Q`` into the kernel's tile layout, unpacks the result.
 
@@ -2956,7 +2956,7 @@ def forward_prefill_split(
     ctx: dict,
     *,
     group: int,
-    dtype: str | None = None,
+    dtype: Optional[str] = None,
 ) -> torch.Tensor:
     """Run split-KV prefill from a prebuilt :func:`plan_prefill_split_ctx` (H19).
 
@@ -3163,11 +3163,11 @@ def forward(
     meta,
     *,
     group: int,
-    dtype: str | None = None,
-    kv_indptr: torch.Tensor | None = None,
-    kv_indices: torch.Tensor | None = None,
-    kv_last_page_len: torch.Tensor | None = None,
-    out: torch.Tensor | None = None,
+    dtype: Optional[str] = None,
+    kv_indptr: Optional[torch.Tensor] = None,
+    kv_indices: Optional[torch.Tensor] = None,
+    kv_last_page_len: Optional[torch.Tensor] = None,
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Run paged decode for one step: pads ``q``, calls the kernel, slices the padded rows away.
 
