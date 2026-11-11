@@ -10,7 +10,8 @@ VLLM_PLUGINS=ascend_platform ASCEND_PLATFORM_OPS=ascend_attention \
 PYTHONPATH=AscendPlatform/src:AscendAttention/src python boot.py     # 原样：崩
 ```
 
-原样跑：模型**加载成功**（35B-A3B 上卡、权重 70 GB），在**第一个 MoE 层的路由**处崩：
+原样跑：权重**加载完成**，在 `LLM()` 内部的 profile/dummy run 走到**第一个 MoE 层的路由**时崩
+（所以不是"跑不了模型"，是第一步就算不出来）：
 
 ```
 File ".../fused_moe/router/fused_topk_router.py", line 24, in vllm_topk_softmax
@@ -41,10 +42,16 @@ def topk_softmax_abi(topk_weights, topk_ids, token_expert_indices, gating_output
 [e2e] OK in 29.1s
 ```
 
-即 **Qwen3.6 在本平台上端到端可跑通**，链路里真实生效的有：我们的 attention API（decode + prefill，
-`engine/attention/prefill.py` 的 tile-bucket 路径）、`engine.moe_method` 注入的我们的
-`moe.experts_unquantized`（MoE 专家计算）、平台自己的 GDN ports、vLLM 的采样。
-生成内容正确（"Paris"），不是空转。
+即 **Qwen3.6 在本平台上端到端可跑通**，生成内容正确（"Paris"），不是空转。链路上实测确认走本仓的是：
+
+* attention：平台的 `engine/attention/`（decode + prefill，日志里 prefill 的 tile-bucket
+  "prepared kernel path" 逐 bucket 出现）；
+* **GDN 的 8 个符号解到本仓**（`_Impl.impl` 实测：`chunk_gated_delta_rule → ascend_attention.ops.fla.chunk`、
+  `l2norm_fwd → ops.gdn.leaves`、`causal_conv1d_fn → ops.fla.causal_conv1d`）——即 GDN 跑的是本仓实现，
+  不是平台自带的 port；
+* MoE 专家计算：平台 `engine.moe_method` 注入的 `moe.experts`（= `ops.moe.compute.fused_experts`），
+  日志里 `registered AscendUnquantizedFusedMoEMethod`；
+* 采样：vLLM 自己的 sampler（本仓的 `sampling.*` 未被绑定，走 vLLM 原生 torch 路径）。
 
 ## 唯一的阻塞项：路由的 out-parameter ABI
 
@@ -68,8 +75,9 @@ sorted_ids, expert_ids, num_tokens_post_pad, expert_map)` vs 本仓的 `(topk_id
 
 ## 非阻塞项（不影响"跑通"，影响"可用"）
 
-1. **性能**：8 tokens / 5.7 s ≈ **1.4 tok/s**。主因是 MoE 专家计算走纯 torch（256 专家 × 40 层），
-   即 README「明确未实现」里的 MoE 内核化；这是下一阶段的工作，不是阻塞。
+1. **性能**：8 tokens / 5.7 s ≈ **1.4 tok/s**（vLLM 自带进度条读数）。**归因未做**：候选是纯 torch 的
+   256 专家 MoE、GDN 的 torch chunk 链、attention 的 reference/内核路径三者之一或组合，得先 profile
+   再下结论。这是下一阶段的工作，不是"跑不通"。
 2. **环境**：本机同时装了 `tileinfer` 与 `ascend_platform` 两个 vLLM 平台插件，vLLM 只允许激活一个，
    必须显式 `VLLM_PLUGINS=ascend_platform`（否则 `Only one platform plugin can be activated`）。
 3. **`silu_and_mul`**：平台 `dense` 族开关默认关，本模型不吃这条；它不是阻塞项。
